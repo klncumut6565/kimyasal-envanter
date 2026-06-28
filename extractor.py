@@ -55,7 +55,7 @@ def pdf_to_text(pdf_path: str) -> str:
             for page in pdf.pages:
                 parts.append(page.extract_text(layout=True) or "")
         return "\n".join(parts)
-    except Exception:
+    except Exception as e1:
         try:
             import fitz
             text_parts = []
@@ -63,8 +63,13 @@ def pdf_to_text(pdf_path: str) -> str:
                 for page in doc:
                     text_parts.append(page.get_text())
             return "\n".join(text_parts)
-        except Exception:
-            return ""
+        except Exception as e2:
+            # Her iki kutuphane de basarisiz oldu; hatayi RuntimeError olarak
+            # yukari tasiyoruz ki extract_adr_info() uzerinden app.py
+            # kullaniciya anlamli bir hata mesaji gosterebilsin.
+            raise RuntimeError(
+                f"PDF okunamadi. pdfplumber: {str(e1)[:120]} | PyMuPDF: {str(e2)[:120]}"
+            ) from e2
         
 def normalize_pdf_text(text: str) -> str:
     """
@@ -92,7 +97,7 @@ def normalize_pdf_text(text: str) -> str:
         flags=re.IGNORECASE
     )
 
-    # P G II -> PG II
+    # P G II -> PG II  (IGNORECASE: taranmış PDF'lerde "p g ii" de gelir)
     text = re.sub(
         r"P\s*G\s*(I{1,3})",
         r"PG \1",
@@ -115,42 +120,6 @@ def normalize_pdf_text(text: str) -> str:
         text,
         flags=re.IGNORECASE
     )
-
-    return text
-def normalize_pdf_text(text: str) -> str:
-    """
-    PDF extraction sonrası oluşan bozuklukları normalize eder.
-    Türkçe SDS'lerde OCR/PDF font sorunlarını azaltır.
-    """
-
-    if not text:
-        return ""
-
-    # non-breaking space
-    text = text.replace("\xa0", " ")
-
-    # fazla whitespace temizliği
-    text = re.sub(r"[ \t]+", " ", text)
-
-    # satır sonu normalize
-    text = re.sub(r"\r\n?", "\n", text)
-
-    # UN 1 2 0 3 -> UN1203
-    text = re.sub(
-        r"U\s*N\s*([0-9])\s*([0-9])\s*([0-9])\s*([0-9])",
-        r"UN\1\2\3\4",
-        text,
-        flags=re.IGNORECASE
-    )
-
-    # P G II -> PG II
-    text = re.sub(r"P\s*G\s*(I{1,3})", r"PG \1", text)
-
-    # Class : 8 -> Class 8
-    text = re.sub(r"Class\s*[:\-]\s*", "Class ", text, flags=re.IGNORECASE)
-
-    # ADR / RID normalize
-    text = re.sub(r"ADR\s*/\s*RID", "ADR/RID", text, flags=re.IGNORECASE)
 
     return text
 
@@ -779,21 +748,11 @@ def extract_adr_info(pdf_path: str):
                 result["paketleme_grubu"] = parsed["paketleme_grubu"]
                 return result
     
-    # ---------------------------------------------------
-    # Yöntem 3 : Tablo biçimindeki ADR kayıtları
-    # ---------------------------------------------------
-
-    parsed3 = parse_adr_table(sec14)
-
-    if parsed3:
-        result["adr_kapsaminda"] = True
-        result["un_no"] = parsed3["un_no"]
-        result["sinif"] = parsed3["sinif"]
-        result["paketleme_grubu"] = parsed3["paketleme_grubu"]
-        result["siniflandirma_kodu"] = parsed3["siniflandirma_kodu"]
-        return result
     # Yöntem 2: "14.1. UN NUMARASI" / "14.3. ... SINIFI" / "14.4. AMBALAJLAMA
     # GRUBU" gibi numaralı alt başlık + değer deseni (örn. AK-KİM şablonu).
+    # NOT: parse_numbered_subsections daha özgül (14.x numaralı başlıklar
+    # arar) olduğu için parse_adr_table'dan ÖNCE deneniyor. parse_adr_table
+    # DOTALL ile çok geniş eşleşir; bu yüzden en sona bırakılıyor.
     parsed2 = parse_numbered_subsections(sec14)
     if parsed2:
         result["adr_kapsaminda"] = True
@@ -801,6 +760,19 @@ def extract_adr_info(pdf_path: str):
         result["sinif"] = parsed2["sinif"]
         result["paketleme_grubu"] = parsed2["paketleme_grubu"]
         result["siniflandirma_kodu"] = parsed2["siniflandirma_kodu"]
+        return result
+
+    # ---------------------------------------------------
+    # Yöntem 3 : Tablo biçimindeki ADR kayıtları (son fallback)
+    # DOTALL ile geniş eşleşme yaptığı için en sona bırakılır.
+    # ---------------------------------------------------
+    parsed3 = parse_adr_table(sec14)
+    if parsed3:
+        result["adr_kapsaminda"] = True
+        result["un_no"] = parsed3["un_no"]
+        result["sinif"] = parsed3["sinif"]
+        result["paketleme_grubu"] = parsed3["paketleme_grubu"]
+        result["siniflandirma_kodu"] = parsed3["siniflandirma_kodu"]
         return result
 
     # ÖNEMLİ (güvenlik sırası): Gerçek bir UN no bulunamadıysa, ŞİMDİ açık

@@ -115,24 +115,35 @@ def match_tablo_a(
         return None
 
     # --------------------------------------------------
-    # PG gerçekten yoksa
-    # Classification Code kullan
+    # PG gerçekten yok (Sınıf 2, Sınıf 7, bazı Sınıf 9 vb.)
+    # Akış:
+    #   1) Tablo A'da PG yok mu? ✓ (buraya geldik, has_pg=False)
+    #   2) PDF'ten siniflandirma_kodu geldi mi?
+    #      → Geldiyse: kod eşleştirmesini dene
+    #      → Eşleştiyse: döndür
+    #   3) Siniflandirma kodu yoksa VEYA eşleşmediyse:
+    #      → Tek satır varsa: döndür (zaten başka ihtimal yok)
+    #      → Birden fazla satır varsa: MANUEL KONTROL
+    #        (hangi siniflandirma kodunun doğru olduğunu bilemeyiz)
     # --------------------------------------------------
 
-    if not sk:
-        return None
+    # Adım 2: PDF'ten gelen siniflandirma_kodu ile eşleştirmeyi dene
+    if sk:
+        for row in same_rows:
+            row_sk = (
+                str(row["siniflandirma_kodu"]).strip()
+                if row["siniflandirma_kodu"]
+                else None
+            )
+            if row_sk == sk:
+                return row
 
-    for row in same_rows:
+    # Adım 3: Siniflandirma kodu yoksa veya eşleşmediyse
+    if len(same_rows) == 1:
+        return same_rows[0]
 
-        row_sk = (
-            str(row["siniflandirma_kodu"]).strip()
-            if row["siniflandirma_kodu"]
-            else None
-        )
-
-        if row_sk == sk:
-            return row
-
+    # Birden fazla satır var, siniflandirma kodu da yok/eşleşmedi:
+    # MANUEL KONTROL -- hangi satırın doğru olduğunu bilemeyiz.
     return None
 
 
