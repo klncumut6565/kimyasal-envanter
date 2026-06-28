@@ -2,6 +2,7 @@ import io
 import os
 import re
 import tempfile
+import time
 
 import streamlit as st
 from openpyxl import load_workbook
@@ -220,10 +221,13 @@ if pdf_files and envanter_path and tablo_a_hazir:
         toplam = len(yeni_pdfler)
         ilerleme_metni = st.empty()
         ilerleme_cubugu = st.progress(0.0)
+        sure_metni = st.empty()
+        sure_gecmisleri = []  # her PDF'in işlem süresi (saniye)
 
         for i, pdf in enumerate(yeni_pdfler, start=1):
             ilerleme_metni.write(f"📄 İşleniyor: **{pdf.name}** ({i}/{toplam})")
             pdf_path = save_upload(pdf, subdir="pdf")
+            _baslangic = time.time()
             try:
                 info = extract_adr_info(pdf_path)
             except Exception as e:
@@ -252,8 +256,24 @@ if pdf_files and envanter_path and tablo_a_hazir:
             }
             ilerleme_cubugu.progress(i / toplam)
 
+            # Geçen süreyi kaydet ve tahmini kalan süreyi hesapla
+            sure_gecmisleri.append(time.time() - _baslangic)
+            kalan_pdf = toplam - i
+            if kalan_pdf > 0:
+                ort_sure = sum(sure_gecmisleri) / len(sure_gecmisleri)
+                tahmini_kalan = ort_sure * kalan_pdf
+                if tahmini_kalan < 60:
+                    sure_metni.info(f"⏱️ {kalan_pdf} PDF kaldı — tahmini kalan süre: **~{tahmini_kalan:.0f} sn**")
+                else:
+                    dk = int(tahmini_kalan // 60)
+                    sn = int(tahmini_kalan % 60)
+                    sure_metni.info(f"⏱️ {kalan_pdf} PDF kaldı — tahmini kalan süre: **~{dk} dk {sn} sn**")
+            else:
+                sure_metni.empty()
+
         ilerleme_metni.empty()
         ilerleme_cubugu.empty()
+        sure_metni.empty()
         st.toast(f"✅ {toplam} PDF işlendi", icon="✅")
 
     st.divider()
