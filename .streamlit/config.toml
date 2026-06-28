@@ -1,0 +1,11 @@
+[server]
+# Yüklenen PDF ve Excel dosyaları için maksimum boyut (MB).
+# Streamlit Community Cloud varsayılanı 200 MB'tır; gerekirse artırın.
+maxUploadSize = 200
+
+[theme]
+base = "light"
+primaryColor = "#1f77b4"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#262730"
