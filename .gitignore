@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Yerel test çıktıları (bunları repoya eklemeyin)
+TEST_OUTPUT_*.xlsx
+*_envanter_guncellendi.xlsx
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit yerel geliştirme cache'i
+.streamlit/secrets.toml
