@@ -24,7 +24,11 @@ def load_tablo_a(path: str):
             "un_no": str(un).strip(),
             "isim": ws.cell(row=r, column=2).value,
             "sinif": str(ws.cell(row=r, column=3).value).strip() if ws.cell(row=r, column=3).value is not None else None,
-            "siniflandirma_kodu": ws.cell(row=r, column=4).value,
+            "siniflandirma_kodu": (
+                str(ws.cell(row=r, column=4).value).strip()
+                if ws.cell(row=r, column=4).value is not None
+                else None
+            ),
             "paketleme_grubu": (ws.cell(row=r, column=5).value or "").strip() or None,
             "ozel_hukumler": ws.cell(row=r, column=7).value,
             "sinirli_miktar": ws.cell(row=r, column=8).value,
@@ -37,13 +41,98 @@ def load_tablo_a(path: str):
     return rows
 
 
-def match_tablo_a(tablo_a_path: str, un_no: str, sinif: str, paketleme_grubu: str):
-    """UN No + Sınıf + Paketleme Grubu ile tam eşleşen satırı bul."""
+def match_tablo_a(
+    tablo_a_path: str,
+    un_no: str,
+    sinif: str,
+    paketleme_grubu: str,
+    siniflandirma_kodu: str = None,
+):
+    """
+    Öncelik sırası
+
+    1) UN + SINIF + PG
+
+    2) Eğer PG yoksa
+
+       UN + SINIF + SINIFLANDIRMA KODU
+    """
+
     rows = load_tablo_a(tablo_a_path)
+
+    un_no = str(un_no).strip()
+    sinif = str(sinif).strip()
+
     pg = (paketleme_grubu or "").strip() or None
+
+    sk = (
+        str(siniflandirma_kodu).strip()
+        if siniflandirma_kodu
+        else None
+    )
+
+    # --------------------------------------------------
+    # 1) Önce PG ile tam eşleşme
+    # --------------------------------------------------
+
     for row in rows:
-        if row["un_no"] == str(un_no).strip() and row["sinif"] == str(sinif).strip() and row["paketleme_grubu"] == pg:
+
+        if (
+            row["un_no"] == un_no
+            and row["sinif"] == sinif
+            and row["paketleme_grubu"] == pg
+        ):
             return row
+
+    # --------------------------------------------------
+    # Aynı UN + sınıf kayıtlarını topla
+    # --------------------------------------------------
+
+    same_rows = []
+
+    for row in rows:
+
+        if (
+            row["un_no"] == un_no
+            and row["sinif"] == sinif
+        ):
+            same_rows.append(row)
+
+    if not same_rows:
+        return None
+
+    # --------------------------------------------------
+    # Eğer bu UN+sınıfta PG kullanan kayıt varsa
+    # classification code ile arama yapma
+    # --------------------------------------------------
+
+    has_pg = any(
+        r["paketleme_grubu"]
+        for r in same_rows
+    )
+
+    if has_pg:
+        return None
+
+    # --------------------------------------------------
+    # PG gerçekten yoksa
+    # Classification Code kullan
+    # --------------------------------------------------
+
+    if not sk:
+        return None
+
+    for row in same_rows:
+
+        row_sk = (
+            str(row["siniflandirma_kodu"]).strip()
+            if row["siniflandirma_kodu"]
+            else None
+        )
+
+        if row_sk == sk:
+            return row
+
     return None
 
 
@@ -115,8 +204,19 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
         row["durum"] = "manual_review"
         return row
 
-    un_no, sinif, pg = adr_info["un_no"], adr_info["sinif"], adr_info["paketleme_grubu"]
-    match = match_tablo_a(tablo_a_path, un_no, sinif, pg)
+    un_no, sinif, pg = (
+        adr_info["un_no"],
+        adr_info["sinif"],
+        adr_info["paketleme_grubu"],
+    )
+
+    match = match_tablo_a(
+        tablo_a_path,
+        un_no,
+        sinif,
+        pg,
+        adr_info.get("siniflandirma_kodu"),
+)
 
     duzeltme_notu = None
     if match is None:
@@ -127,7 +227,13 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
         # doldur ve "Açıklama" sütununda bu düzeltmeyi not et.
         official_sinif = get_official_sinif_for_un(tablo_a_path, un_no)
         if official_sinif and official_sinif != str(sinif).strip():
-            duzeltilmis_match = match_tablo_a(tablo_a_path, un_no, official_sinif, pg)
+            duzeltilmis_match = match_tablo_a(
+                tablo_a_path,
+                un_no,
+                official_sinif,
+                pg,
+                adr_info.get("siniflandirma_kodu"),
+            )
             if duzeltilmis_match:
                 match = duzeltilmis_match
                 duzeltme_notu = (
