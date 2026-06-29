@@ -256,8 +256,16 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
 
     row["UN NUMARASI"] = int(un_no)
     row["SINIFI / ETİKETİ"] = int(sinif) if str(sinif).isdigit() else sinif
-    row["PAKETLEME GRUBU"] = pg or MANUAL_REVIEW_TEXT
     row["ADR-IMDG-IATA"] = "ADR"
+
+    if match is None:
+        row["PAKETLEME GRUBU"] = pg or MANUAL_REVIEW_TEXT
+    else:
+        # Eşleşme bulunduysa PG zaten doğrulanmış demektir -- pg boşsa bu
+        # HATA değil, bu UN/sınıf için ADR'de paketleme grubu olmadığı
+        # anlamına gelir (örn. gazlar, Sınıf 1, bazı Sınıf 7). Böyle
+        # durumda hücre boş bırakılır, "MANUEL KONTROL GEREKLİ" YAZILMAZ.
+        row["PAKETLEME GRUBU"] = pg if pg else None
 
     if match is None:
         row.update({
