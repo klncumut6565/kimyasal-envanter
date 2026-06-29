@@ -226,8 +226,11 @@ with col_upload:
     )
 with col_clear:
     st.write("")  # dikey hizalama için boşluk
-    if st.button("🗑️ PDF Yükleme Alanını Temizle"):
+    if st.button("🗑️ Tümünü Temizle (PDF'ler + İnceleme Listesi)"):
+        st.session_state.urunler = {}
         st.session_state.pdf_uploader_key += 1  # file_uploader'ı sıfırlamak için
+        st.session_state.sonuc_dosyasi = None
+        st.session_state.sonuc_mesajlari = []
         st.rerun()
 
 mevcut_isimler = existing_names(envanter_path) if (envanter_path and not v2) else set()
