@@ -121,6 +121,18 @@ def normalize_pdf_text(text: str) -> str:
         flags=re.IGNORECASE
     )
 
+    # Windows-1252 / Latin-1 encoding bozuklukları:
+    # pdfplumber bazı PDF'lerde Türkçe karakterleri yanlış çözüyor.
+    # En sık görülenler:
+    #   Ģ  (U+0122) -> ş   (S cedilla -> s cedilla)
+    #   ġ  (U+0121) -> ğ   (g dot above -> g breve)
+    #   ı  (U+0131) zaten doğru gelir; İ bazen Ġ (U+0120) olarak gelir
+    text = text.replace("\u0122", "ş").replace("\u0122".upper(), "Ş")
+    text = text.replace("\u0121", "ğ").replace("\u0120", "Ğ")
+    # Doğrudan karakter olarak da ekle (kaynak dosya encoding'ine bağlı)
+    text = text.replace("Ģ", "ş").replace("ģ", "ş")
+    text = text.replace("ġ", "ğ").replace("Ġ", "Ğ")
+
     return text
 
 def extract_revize_tarihi(text: str):
@@ -513,6 +525,11 @@ def parse_numbered_subsections(sec14_text: str):
             if m:
                 un_no = m.group(1)
 
+    # UN numaraları 1000-3599 aralığındadır (ADR Tablo A'ya göre).
+    # Bu aralık dışındaki sayılar (yıl, sayfa no, belge no vb.) UN no olamaz.
+    if un_no and not (1000 <= int(un_no) <= 3599):
+        un_no = None
+
     if not un_no:
         return None
 
@@ -672,6 +689,30 @@ def parse_numbered_subsections(sec14_text: str):
     if m:
         siniflandirma_kodu = m.group(1).strip().upper()
 
+    # ---------------------------------------------------------
+    # SINIF 2: Etiket bilgisinden siniflandirma kodu türet
+    # "Etiket Bilgisi : 2.2" veya "Etiket : 2.1" gibi alanlar
+    # doğrudan sınıflandırma kodu yazmaz. ADR kuralına göre:
+    #   2.1 → F  (parlayıcı gaz)
+    #   2.2 → A  (basınçlı/boğucu gaz, alevlenmez)
+    #   2.3 → T, TF, TC, TO, TFC, TOC vb. (zehirli gaz)
+    # PDF'te SINIFLANDIRMA KODU alanı yoksa etiket değerinden türetiriz.
+    # ---------------------------------------------------------
+    if siniflandirma_kodu is None and sinif and str(sinif).strip() == "2":
+        etiket_m = re.search(
+            r"(?:Etiket(?:\s+Bilgisi)?|Label)\s*[:\-]?\s*(2\.\d)",
+            adr_window,
+            re.IGNORECASE
+        )
+        if etiket_m:
+            etiket_deger = etiket_m.group(1).strip()
+            _etiket_map = {
+                "2.1": "F",
+                "2.2": "A",
+                "2.3": "T",
+            }
+            siniflandirma_kodu = _etiket_map.get(etiket_deger)
+
     return {
         "un_no": un_no,
         "sinif": sinif,
@@ -734,6 +775,14 @@ def extract_adr_info(pdf_path: str):
 
     result["ham_metin_bulundu"] = True
 
+    # Kapsam dışı kontrolü: "tehlikeli madde olarak düzenlenmemiştir" gibi
+    # açık bir ifade varsa hiçbir UN arama yöntemini denemeden çık.
+    # NOT: Bu kontrol ÖNCE yapılır; aksi halde alt başlık numaraları (14.4 vb.)
+    # veya belge tarihleri (2014) yanlışlıkla UN no olarak yakalanabilir.
+    if explicit_not_in_scope(sec14):
+        result["adr_kapsaminda"] = False
+        return result
+
     # Yöntem 1: Tek başına "ADR" satırı + altındaki "UN ####" deseni
     # (örn. Ashland/DyStar şablonu).
     block = find_adr_block(sec14)
@@ -773,16 +822,6 @@ def extract_adr_info(pdf_path: str):
         result["sinif"] = parsed3["sinif"]
         result["paketleme_grubu"] = parsed3["paketleme_grubu"]
         result["siniflandirma_kodu"] = parsed3["siniflandirma_kodu"]
-        return result
-
-    # ÖNEMLİ (güvenlik sırası): Gerçek bir UN no bulunamadıysa, ŞİMDİ açık
-    # "kapsam dışı" ifadesine bakıyoruz. Bu kontrolü UN aramadan ÖNCE değil
-    # SONRA yapıyoruz -- aksi halde, metnin başka bir yerinde geçen "X için
-    # düzenleme yoktur" gibi bir ifade, başka bir yerde gerçekten var olan
-    # bir UN numarasını yanlışlıkla ezip "kapsam dışı" gösterebilirdi.
-    # Gerçek veri bulunduğunda HER ZAMAN ona güvenilir.
-    if explicit_not_in_scope(sec14):
-        result["adr_kapsaminda"] = False
         return result
 
     # ÖNEMLİ (güvenlik): Hiçbir yöntem UN no bulamadıysa VE açık bir
