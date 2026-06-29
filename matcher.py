@@ -232,12 +232,16 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
     duzeltme_notu = None
     if match is None:
         # UN no Tablo A'da var ama PDF'teki sınıf/PG kombinasyonu eşleşmiyor
-        # olabilir -- bu genellikle PDF'i hazırlayan firmanın sınıfı yanlış
-        # yazdığı anlamına gelir (UN no resmen sadece belirli bir sınıfta
-        # yer alır). Resmi sınıfla tekrar dene; bulursa veriyi DOĞRU sınıfla
-        # doldur ve "Açıklama" sütununda bu düzeltmeyi not et.
+        # olabilir. İki ayrı durum var:
+        #   a) PDF'te sınıf hiç okunamadı (sinif=None/boş) -- bu MSDS'in
+        #      hatası değil, çıkarma işleminin o PDF'te sınıfı bulamamış
+        #      olmasıdır. Üreticiye bildirme önerisi YANLIŞ olur.
+        #   b) PDF'te GERÇEK ama YANLIŞ bir sınıf yazılı (örn. '9' yazılı
+        #      ama resmi sınıf '6.1') -- bu durumda MSDS'i hazırlayan
+        #      firmanın hatası olabilir, bildirilmesi mantıklı.
         official_sinif = get_official_sinif_for_un(tablo_a_path, un_no)
-        if official_sinif and official_sinif != str(sinif).strip():
+        sinif_bos = not str(sinif).strip() or str(sinif).strip().lower() == "none"
+        if official_sinif and (sinif_bos or official_sinif != str(sinif).strip()):
             duzeltilmis_match = match_tablo_a(
                 tablo_a_path,
                 un_no,
@@ -247,11 +251,18 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
             )
             if duzeltilmis_match:
                 match = duzeltilmis_match
-                duzeltme_notu = (
-                    f"⚠️ DÜZELTİLDİ: MSDS'te UN {un_no} için Sınıf {sinif} yazılıydı; "
-                    f"ADR Tablo A'ya göre resmi sınıf {official_sinif} olduğu için bu "
-                    f"değer kullanılarak dolduruldu. MSDS hazırlayan firmaya bildirin."
-                )
+                if sinif_bos:
+                    duzeltme_notu = (
+                        f"ℹ️ TAMAMLANDI: MSDS'te UN {un_no} için Bölüm 14'te Sınıf "
+                        f"bilgisi okunamadı; ADR Tablo A'ya göre bu UN'nin resmi "
+                        f"sınıfı ({official_sinif}) kullanılarak dolduruldu."
+                    )
+                else:
+                    duzeltme_notu = (
+                        f"⚠️ DÜZELTİLDİ: MSDS'te UN {un_no} için Sınıf {sinif} yazılıydı; "
+                        f"ADR Tablo A'ya göre resmi sınıf {official_sinif} olduğu için bu "
+                        f"değer kullanılarak dolduruldu. MSDS hazırlayan firmaya bildirin."
+                    )
                 sinif = official_sinif
 
     row["UN NUMARASI"] = int(un_no)
@@ -283,12 +294,20 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
         # Resmi sınıfla bile eşleşme bulunamadıysa (örn. PG de yanlış
         # olabilir), en azından tespit edilen sınıf tutarsızlığını bildir.
         official_sinif = get_official_sinif_for_un(tablo_a_path, un_no)
-        if official_sinif and official_sinif != str(sinif).strip():
-            row["Açıklama"] = (
-                f"⚠️ UYARI: MSDS'te UN {un_no} için Sınıf {sinif} yazılı, ancak ADR "
-                f"Tablo A'ya göre bu UN numarasının resmi sınıfı {official_sinif}. "
-                f"MSDS hazırlayan firmaya danışıp elle düzeltin."
-            )
+        sinif_bos = not str(sinif).strip() or str(sinif).strip().lower() == "none"
+        if official_sinif and (sinif_bos or official_sinif != str(sinif).strip()):
+            if sinif_bos:
+                row["Açıklama"] = (
+                    f"ℹ️ MSDS'te UN {un_no} için Bölüm 14'te Sınıf bilgisi okunamadı. "
+                    f"ADR Tablo A'ya göre resmi sınıfı {official_sinif}, ancak Paketleme "
+                    f"Grubu uyuşmadığı için satır elle kontrol edilmelidir."
+                )
+            else:
+                row["Açıklama"] = (
+                    f"⚠️ UYARI: MSDS'te UN {un_no} için Sınıf {sinif} yazılı, ancak ADR "
+                    f"Tablo A'ya göre bu UN numarasının resmi sınıfı {official_sinif}. "
+                    f"MSDS hazırlayan firmaya danışıp elle düzeltin."
+                )
         row["durum"] = "manual_review"
         return row
 
