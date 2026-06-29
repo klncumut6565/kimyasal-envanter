@@ -55,7 +55,7 @@ def pdf_to_text(pdf_path: str) -> str:
             for page in pdf.pages:
                 parts.append(page.extract_text(layout=True) or "")
         return "\n".join(parts)
-    except Exception as e1:
+    except Exception:
         try:
             import fitz
             text_parts = []
@@ -63,77 +63,9 @@ def pdf_to_text(pdf_path: str) -> str:
                 for page in doc:
                     text_parts.append(page.get_text())
             return "\n".join(text_parts)
-        except Exception as e2:
-            # Her iki kutuphane de basarisiz oldu; hatayi RuntimeError olarak
-            # yukari tasiyoruz ki extract_adr_info() uzerinden app.py
-            # kullaniciya anlamli bir hata mesaji gosterebilsin.
-            raise RuntimeError(
-                f"PDF okunamadi. pdfplumber: {str(e1)[:120]} | PyMuPDF: {str(e2)[:120]}"
-            ) from e2
-        
-def normalize_pdf_text(text: str) -> str:
-    """
-    PDF extraction sonrası oluşan OCR/PDF bozulmalarını düzeltir.
-    Türkçe SDS/MSDS belgeleri için optimize edilmiştir.
-    """
+        except Exception:
+            return ""
 
-    if not text:
-        return ""
-
-    # non-breaking space temizliği
-    text = text.replace("\xa0", " ")
-
-    # fazla boşlukları temizle
-    text = re.sub(r"[ \t]+", " ", text)
-
-    # satır sonlarını normalize et
-    text = re.sub(r"\r\n?", "\n", text)
-
-    # UN 1 2 0 3 -> UN1203
-    text = re.sub(
-        r"U\s*N\s*([0-9])\s*([0-9])\s*([0-9])\s*([0-9])",
-        r"UN\1\2\3\4",
-        text,
-        flags=re.IGNORECASE
-    )
-
-    # P G II -> PG II  (IGNORECASE: taranmış PDF'lerde "p g ii" de gelir)
-    text = re.sub(
-        r"P\s*G\s*(I{1,3})",
-        r"PG \1",
-        text,
-        flags=re.IGNORECASE
-    )
-
-    # Class : 8 -> Class 8
-    text = re.sub(
-        r"Class\s*[:\-]\s*",
-        "Class ",
-        text,
-        flags=re.IGNORECASE
-    )
-
-    # ADR / RID -> ADR/RID
-    text = re.sub(
-        r"ADR\s*/\s*RID",
-        "ADR/RID",
-        text,
-        flags=re.IGNORECASE
-    )
-
-    # Windows-1252 / Latin-1 encoding bozuklukları:
-    # pdfplumber bazı PDF'lerde Türkçe karakterleri yanlış çözüyor.
-    # En sık görülenler:
-    #   Ģ  (U+0122) -> ş   (S cedilla -> s cedilla)
-    #   ġ  (U+0121) -> ğ   (g dot above -> g breve)
-    #   ı  (U+0131) zaten doğru gelir; İ bazen Ġ (U+0120) olarak gelir
-    text = text.replace("\u0122", "ş").replace("\u0122".upper(), "Ş")
-    text = text.replace("\u0121", "ğ").replace("\u0120", "Ğ")
-    # Doğrudan karakter olarak da ekle (kaynak dosya encoding'ine bağlı)
-    text = text.replace("Ģ", "ş").replace("ģ", "ş")
-    text = text.replace("ġ", "ğ").replace("Ġ", "Ğ")
-
-    return text
 
 def extract_revize_tarihi(text: str):
     # Farklı üreticiler farklı etiketler kullanıyor:
@@ -301,7 +233,7 @@ def extract_full_info(pdf_path: str, text: str = None):
     bilgi çıkarır. extract_adr_info ile aynı metni tekrar okumamak için
     text önceden çıkarılmışsa parametre olarak verilebilir."""
     if text is None:
-        text = normalize_pdf_text(pdf_to_text(pdf_path))
+        text = pdf_to_text(pdf_path)
     h_kodlari = extract_h_kodlari(text)
     return {
         "tedarikci": extract_tedarikci(text),
@@ -358,11 +290,7 @@ NOT_IN_SCOPE_PATTERNS = [
     r"not\s+regulated\s+(?:for|as)\s+transport",
     r"no(?:t)?\s+dangerous\s+goods\s+(?:for|in)\s+transport",
     r"not\s+dangerous\s+goods\b",                                  # "Not dangerous goods"
-    r"not\s+a\s+dot\s+controlled\s+material", 
-    r"karayolu taşımacılığında düzenlemeye tabi değildir",
-    r"adr kapsamında değildir",
-    r"tehlikeli madde olarak sınıflandırılmamıştır",
-    r"taşımacılık açısından tehlikeli değildir",# ABD DOT formatı
+    r"not\s+a\s+dot\s+controlled\s+material",                      # ABD DOT formatı
 ]
 
 
@@ -372,23 +300,6 @@ def explicit_not_in_scope(section14_text: str) -> bool:
     transport class' türü açık bir ifade var mı kontrol eder. Bu durumda
     ürünün ADR kapsamı dışında olduğunu, sadece "ADR" satırının
     yokluğuna bakarak değil, doğrudan metinden anlarız."""
-        # ---------------------------------------------------------
-    # Eğer ADR kısmında gerçek bir UN numarası varsa
-    # doğrudan kapsam dışı sayma
-    # ---------------------------------------------------------
-
-    adr_positive = re.search(
-        r"""
-        ADR
-        .{0,250}?
-        \bUN[-\s:]?\d{3,4}\b
-        """,
-        section14_text,
-        re.IGNORECASE | re.DOTALL | re.VERBOSE
-    )
-
-    if adr_positive:
-        return False
     for p in NOT_IN_SCOPE_PATTERNS:
         if re.search(p, section14_text, re.IGNORECASE):
             return True
@@ -408,38 +319,18 @@ def explicit_not_in_scope(section14_text: str) -> bool:
 
 
 def find_adr_block(section14_text: str):
-    """
-    Bölüm 14 içinde ADR bloğunu bul.
-    Türkçe SDS formatlarına toleranslıdır.
-    """
-
+    """Bölüm 14 içinde tam olarak 'ADR' başlığına sahip bloğu bul (ADNR ile karıştırma)."""
     lines = section14_text.split("\n")
-
     for i, line in enumerate(lines):
-
-        clean = line.strip().upper()
-
-        if (
-            clean == "ADR"
-            or "ADR/RID" in clean
-            or clean.startswith("ADR ")
-            or "KARAYOLU" in clean
-            or "ROAD" in clean
-        ):
-
+        if _is_section_label(line, "ADR"):
             block_lines = []
-
             for l in lines[i + 1:]:
-
-                # boş satır görünce blok bitsin
                 if l.strip() == "":
                     break
-
                 block_lines.append(l)
-
             return block_lines
-
     return None
+
 
 ROMAN_PG = re.compile(r"^(I|II|III)$")
 NUM_TOKEN = re.compile(r"^\d{1,2}(\.\d)?$")
@@ -473,316 +364,101 @@ def parse_adr_first_line(line: str):
 
 
 def parse_numbered_subsections(sec14_text: str):
+    """'14.1. UN NUMARASI\\n2790\\n2790...' (AK-KİM tarzı, değer doğrudan
+    altında) veya '14.1.UN Numarası\\nUN No. (ADR/RID/ADN) 1760' (SERİN
+    KİMYA tarzı, değerden önce bir etiket satırı daha var) gibi numaralı
+    alt başlık + değer formatlarından UN no/sınıf/paketleme grubunu
+    çıkarır -- 'ADR' diye tek başına bir satır yok, bu yüzden
+    find_adr_block bu formatlarda hiçbir şey bulamıyor.
+    Başlık ile değer arasında ekstra etiket satırı olabileceği için,
+    başlıktan sonraki makul bir pencere (~150 karakter) içinde ilk uygun
+    değer aranır (DOTALL: satır sonları da bu pencereye dahildir).
     """
-    Bölüm 14 içindeki numaralı alt başlıklardan
-    UN / Sınıf / Paketleme Grubu çıkarır.
-
-    Türkçe SDS/MSDS formatlarına toleranslıdır.
-    """
-
-    # ---------------------------------------------------------
-    # UN NUMARASI
-    # ---------------------------------------------------------
-
     un_no = None
-
     m = re.search(
         r"14\s*\.?\s*1\b\.?\s*UN[\s-]*NUMARAS[ıi].{0,150}?\b(\d{3,4})\b",
-        sec14_text,
-        re.IGNORECASE | re.DOTALL
-    )
-
+        sec14_text, re.IGNORECASE | re.DOTALL)
     if m:
         un_no = m.group(1)
-
     else:
-        # UN NO. KARAYOLU 3412
-        m = re.search(
-            r"\bUN\s*N[Oo]\.?.{0,30}?\b(\d{3,4})\b",
-            sec14_text,
-            re.IGNORECASE | re.DOTALL
-        )
-
+        # "UN NO. KARAYOLU 3412" gibi numaralı alt başlık olmadan düz
+        # "UN NO. <bir şeyler> <sayı>" etiketi (örn. SETACID VS-N şablonu).
+        m = re.search(r"\bUN\s*N[Oo]\.?.{0,30}?\b(\d{3,4})\b", sec14_text, re.DOTALL)
         if m:
             un_no = m.group(1)
-
         else:
-            # UN1760 / UN 1760 / UN-1760
-            m = re.search(
-                r"""
-                \b
-                U\s*N
-                (?:[-\s]*NO\.?)?
-                (?:[-\s]*NUMARASI)?
-                \s*[:\-]?\s*
-                (\d{3,4})
-                \b
-                """,
-                sec14_text,
-                re.IGNORECASE | re.VERBOSE
-            )
-
+            # Bazı şablonlarda Bölüm 14'ün en başında "UN 2790-ASETİK ASİT..."
+            # şeklinde özet bir satır da bulunur.
+            m = re.search(r"\bUN\s*[-:]?\s*(\d{3,4})\b", sec14_text)
             if m:
                 un_no = m.group(1)
-
-    # UN numaraları 1000-3599 aralığındadır (ADR Tablo A'ya göre).
-    # Bu aralık dışındaki sayılar (yıl, sayfa no, belge no vb.) UN no olamaz.
-    if un_no and not (1000 <= int(un_no) <= 3599):
-        un_no = None
-
     if not un_no:
         return None
 
-    # ---------------------------------------------------------
-    # SADECE ADR CONTEXT İÇİNDE ÇALIŞ
-    # ---------------------------------------------------------
-
-    adr_window_match = re.search(
-        r"(ADR.*?)(IMDG|IATA|DENİZYOLU|HAVAYOLU|$)",
-        sec14_text,
-        re.IGNORECASE | re.DOTALL
-    )
-
-    adr_window = (
-        adr_window_match.group(1)
-        if adr_window_match
-        else sec14_text
-    )
-
-    # ---------------------------------------------------------
-    # SINIF
-    # ---------------------------------------------------------
-
     sinif = None
-
-    # 14.3 başlığı + SINIF kelimesi + sayı (adr_window ve sec14_text'e bak)
-    for _search_text in (adr_window, sec14_text):
-        m = re.search(
-            r"14\s*\.?\s*3\b\.?\s*[^\n]{0,60}?S[ıi]N[ıi]F.{0,150}?\b(\d+(?:\.\d+)?)\b",
-            _search_text,
-            re.IGNORECASE | re.DOTALL
-        )
-        if m and m.group(1) != str(un_no):
-            sinif = m.group(1)
-            break
-        if m and m.group(1) == str(un_no):
-            # yanlışlıkla UN numarasını yakaladıysa
-            rest = _search_text[m.end():m.end() + 150]
-            m_next = re.search(r"\b(\d+(?:\.\d+)?)\b", rest)
-            if m_next and m_next.group(1) != str(un_no):
-                sinif = m_next.group(1)
-                break
-
-    # "Taşıma sınıfı(ları) 9" formatı için ek fallback
-    if sinif is None:
-        m = re.search(
-            r"14\s*\.?\s*3\b[^\n]{0,80}?\b(\d+(?:\.\d+)?)\s*$",
-            sec14_text,
-            re.IGNORECASE | re.MULTILINE
-        )
-        if m and m.group(1) != str(un_no):
-            sinif = m.group(1)
-
-    # Türkçe fallback: "SINIFI / TEHLİKE SINIFI / ADR SINIFI / Taşıma sınıfı"
-    if sinif is None:
-        m = re.search(
-            r"(?:Ta[şs][ıi]ma\s+)?S[ıi]N[ıi]F[ıi]?(?:\([^)]*\))?\s*[:\-]?\s*(\d+(?:\.\d+)?)",
-            sec14_text,
-            re.IGNORECASE
-        )
-        if m and m.group(1) != str(un_no):
-            sinif = m.group(1)
-
-    # ADR SINIFI NOSU 8
-    if sinif is None:
-
+    m = re.search(
+        r"14\s*\.?\s*3\b\.?\s*[^\n]{0,60}?S[ıi]N[ıi]F.{0,150}?\b(\d+(?:\.\d+)?)\b",
+        sec14_text, re.IGNORECASE | re.DOTALL)
+    if m and m.group(1) == str(un_no):
+        # İlk bulunan sayı UN no'nun kendisinin tekrarı olabilir (örn.
+        # açıklayıcı metinde "ADR ÜN 2014 ... 5.1, P.G. II" gibi UN no
+        # önce geçiyorsa) -- aynı pencerede bir sonraki sayıyı dene.
+        rest = sec14_text[m.end():m.end() + 150]
+        m_next = re.search(r"\b(\d+(?:\.\d+)?)\b", rest)
+        m = m_next if (m_next and m_next.group(1) != str(un_no)) else None
+    if m:
+        sinif = m.group(1)
+    else:
+        # "ADR SINIFI NOSU. 8" gibi numaralı alt başlık olmadan düz etiket.
         m = re.search(
             r"\bADR\w*\s*S[ıi]N[ıi]F\w*.{0,30}?\b(\d+(?:\.\d+)?)\b",
-            adr_window,
-            re.IGNORECASE | re.DOTALL
-        )
-
+            sec14_text, re.IGNORECASE | re.DOTALL)
         if m and m.group(1) != str(un_no):
             sinif = m.group(1)
-
-    # UN 1832 8.II
-    if sinif is None:
-
-        m = re.search(
-            rf"\bUN\s*{re.escape(str(un_no))}\s+(\d+(?:\.\d+)?)\.(I{{1,3}})\b",
-            adr_window,
-            re.IGNORECASE
-        )
-
-        if m:
-            sinif = m.group(1)
-
-    # ---------------------------------------------------------
-    # PAKETLEME GRUBU
-    # ---------------------------------------------------------
+        else:
+            # "UN 1832 8.II" gibi UN no'nun hemen ardından gelen
+            # "Sınıf.PaketlemeGrubu" birleşik kısaltması (tek satırlık
+            # özet format).
+            m = re.search(rf"\bUN\s*{re.escape(str(un_no))}\s+(\d+(?:\.\d+)?)\.(I{{1,3}})\b", sec14_text)
+            if m:
+                sinif = m.group(1)
 
     pg = None
-
-    # 14.4 başlığını hem adr_window hem sec14_text'te ara
-    for _pg_text in (adr_window, sec14_text):
-        m_pg = re.search(
-            r"14\s*\.?\s*4\b[^\n]{0,80}?\b(I{1,3})\b",
-            _pg_text,
-            re.IGNORECASE
-        )
-        if m_pg:
-            pg = m_pg.group(1)
-            break
-
-    if pg is None:
-        m_pg = re.search(
-            r"14\s*\.?\s*4\b[^\n]{0,80}?\b(I{1,3})\s*$",
-            sec14_text,
-            re.IGNORECASE | re.MULTILINE
-        )
-        if m_pg:
-            pg = m_pg.group(1)
-
     m = re.search(
-        r"14\s*\.?\s*4\b\.?\s*[^\n]{0,60}?GRUBU.{0,150}?\b(I{1,3})\b",
-        adr_window,
-        re.IGNORECASE | re.DOTALL
-    )
-
+        r"14\s*\.?\s*4\b\.?\s*[^\n]{0,60}?GRUBU.{0,400}?\b(I{1,3})\b",
+        sec14_text, re.IGNORECASE | re.DOTALL)
     if m:
         pg = m.group(1)
-
-    # Türkçe fallback
-    if pg is None:
-
+    else:
+        # "ADR/RID ambalajlama grubu II" / "IMDG PAKET GR. III" gibi numaralı alt
+        # başlık olmadan düz etiket (örn. SETACID VS-N şablonu).
+        # ADR[\w/]* → ADR/RID gibi eğik çizgili ifadeleri de kapsar.
         m = re.search(
-            r"(?:PAKETLEME GRUBU|AMBALAJLAMA GRUBU|PG)"
-            r".{0,40}?\b(I{1,3})\b",
-            adr_window,
-            re.IGNORECASE | re.DOTALL
-        )
-
+            r"\bADR[\w/]*\s*(?:PAKET|AMBALAJ\w*)\s*GR\w*\.?.{0,20}?\b(I{1,3})\b",
+            sec14_text, re.IGNORECASE | re.DOTALL)
         if m:
             pg = m.group(1)
+        else:
+            # "UN 1832 8.II" gibi UN no'nun hemen ardından gelen
+            # "Sınıf.PaketlemeGrubu" birleşik kısaltması.
+            m = re.search(rf"\bUN\s*{re.escape(str(un_no))}\s+\d+(?:\.\d+)?\.(I{{1,3}})\b", sec14_text)
+            if m:
+                pg = m.group(1)
 
-    # ADR PAKET GRUBU III
-    if pg is None:
+    return {"un_no": un_no, "sinif": sinif, "paketleme_grubu": pg}
 
-        m = re.search(
-            r"\bADR\w*\s*(?:PAKET|AMBALAJ\w*)\s*GR\w*\.?.{0,20}?\b(I{1,3})\b",
-            adr_window,
-            re.IGNORECASE | re.DOTALL
-        )
-
-        if m:
-            pg = m.group(1)
-
-    # UN 1832 8.II
-    if pg is None:
-
-        m = re.search(
-            rf"\bUN\s*{re.escape(str(un_no))}\s+\d+(?:\.\d+)?\.(I{{1,3}})\b",
-            adr_window,
-            re.IGNORECASE
-        )
-
-        if m:
-            pg = m.group(1)
-
-    # ---------------------------------------------------------
-    # SINIFLANDIRMA KODU
-    # ---------------------------------------------------------
-
-    siniflandirma_kodu = None
-
-    m = re.search(
-        r"""
-        (?:SINIFLANDIRMA\s*KODU|CLASSIFICATION\s*CODE)
-        [^\n:]{0,40}
-        [:]?\s*
-        ([A-Z0-9]+)
-        """,
-        adr_window,
-        re.IGNORECASE | re.VERBOSE
-    )
-
-    if m:
-        siniflandirma_kodu = m.group(1).strip().upper()
-
-    # ---------------------------------------------------------
-    # SINIF 2: Etiket bilgisinden siniflandirma kodu türet
-    # "Etiket Bilgisi : 2.2" veya "Etiket : 2.1" gibi alanlar
-    # doğrudan sınıflandırma kodu yazmaz. ADR kuralına göre:
-    #   2.1 → F  (parlayıcı gaz)
-    #   2.2 → A  (basınçlı/boğucu gaz, alevlenmez)
-    #   2.3 → T, TF, TC, TO, TFC, TOC vb. (zehirli gaz)
-    # PDF'te SINIFLANDIRMA KODU alanı yoksa etiket değerinden türetiriz.
-    # ---------------------------------------------------------
-    if siniflandirma_kodu is None and sinif and str(sinif).strip() == "2":
-        etiket_m = re.search(
-            r"(?:Etiket(?:\s+Bilgisi)?|Label)\s*[:\-]?\s*(2\.\d)",
-            adr_window,
-            re.IGNORECASE
-        )
-        if etiket_m:
-            etiket_deger = etiket_m.group(1).strip()
-            _etiket_map = {
-                "2.1": "F",
-                "2.2": "A",
-                "2.3": "T",
-            }
-            siniflandirma_kodu = _etiket_map.get(etiket_deger)
-
-    return {
-        "un_no": un_no,
-        "sinif": sinif,
-        "paketleme_grubu": pg,
-        "siniflandirma_kodu": siniflandirma_kodu,
-    }
-    
-    
-def parse_adr_table(sec14_text):
-    """
-    Tablo biçimindeki ADR/RID kayıtlarını okumaya çalışır.
-    """
-
-    # ADR/RID satırı
-    m = re.search(
-        r"""
-        ADR\s*/?\s*RID
-        .*?
-        UN\s*[-:]?\s*(\d{3,4})
-        .*?
-        \b(\d(?:\.\d)?)\b
-        .*?
-        \b(I{1,3})\b
-        """,
-        sec14_text,
-        re.IGNORECASE | re.DOTALL | re.VERBOSE
-    )
-
-    if not m:
-        return None
-
-    return {
-        "un_no": m.group(1),
-        "sinif": m.group(2),
-        "paketleme_grubu": m.group(3),
-        "siniflandirma_kodu": None,
-    }    
 
 def extract_adr_info(pdf_path: str):
     """Tek bir PDF'ten ADR (Bölüm 14) bilgisini VE Versiyon 2'nin diğer
     sütunları (tedarikçi, fonksiyon, cas no, H kodları vb.) için Bölüm
     1/2/3'ten ek bilgiyi tek seferde çıkarır."""
-    text = normalize_pdf_text(pdf_to_text(pdf_path))
+    text = pdf_to_text(pdf_path)
     result = {
         "revize_tarihi": extract_revize_tarihi(text),
         "onerilen_ad": extract_suggested_name(text),
         "un_no": None,
         "sinif": None,
         "paketleme_grubu": None,
-        "siniflandirma_kodu": None,
         "adr_kapsaminda": None,  # True / False / None (belirsiz->manuel kontrol)
         "ham_metin_bulundu": False,
     }
@@ -794,14 +470,6 @@ def extract_adr_info(pdf_path: str):
         return result
 
     result["ham_metin_bulundu"] = True
-
-    # Kapsam dışı kontrolü: "tehlikeli madde olarak düzenlenmemiştir" gibi
-    # açık bir ifade varsa hiçbir UN arama yöntemini denemeden çık.
-    # NOT: Bu kontrol ÖNCE yapılır; aksi halde alt başlık numaraları (14.4 vb.)
-    # veya belge tarihleri (2014) yanlışlıkla UN no olarak yakalanabilir.
-    if explicit_not_in_scope(sec14):
-        result["adr_kapsaminda"] = False
-        return result
 
     # Yöntem 1: Tek başına "ADR" satırı + altındaki "UN ####" deseni
     # (örn. Ashland/DyStar şablonu).
@@ -816,32 +484,25 @@ def extract_adr_info(pdf_path: str):
                 result["sinif"] = parsed["sinif"]
                 result["paketleme_grubu"] = parsed["paketleme_grubu"]
                 return result
-    
+
     # Yöntem 2: "14.1. UN NUMARASI" / "14.3. ... SINIFI" / "14.4. AMBALAJLAMA
     # GRUBU" gibi numaralı alt başlık + değer deseni (örn. AK-KİM şablonu).
-    # NOT: parse_numbered_subsections daha özgül (14.x numaralı başlıklar
-    # arar) olduğu için parse_adr_table'dan ÖNCE deneniyor. parse_adr_table
-    # DOTALL ile çok geniş eşleşir; bu yüzden en sona bırakılıyor.
     parsed2 = parse_numbered_subsections(sec14)
     if parsed2:
         result["adr_kapsaminda"] = True
         result["un_no"] = parsed2["un_no"]
         result["sinif"] = parsed2["sinif"]
         result["paketleme_grubu"] = parsed2["paketleme_grubu"]
-        result["siniflandirma_kodu"] = parsed2["siniflandirma_kodu"]
         return result
 
-    # ---------------------------------------------------
-    # Yöntem 3 : Tablo biçimindeki ADR kayıtları (son fallback)
-    # DOTALL ile geniş eşleşme yaptığı için en sona bırakılır.
-    # ---------------------------------------------------
-    parsed3 = parse_adr_table(sec14)
-    if parsed3:
-        result["adr_kapsaminda"] = True
-        result["un_no"] = parsed3["un_no"]
-        result["sinif"] = parsed3["sinif"]
-        result["paketleme_grubu"] = parsed3["paketleme_grubu"]
-        result["siniflandirma_kodu"] = parsed3["siniflandirma_kodu"]
+    # ÖNEMLİ (güvenlik sırası): Gerçek bir UN no bulunamadıysa, ŞİMDİ açık
+    # "kapsam dışı" ifadesine bakıyoruz. Bu kontrolü UN aramadan ÖNCE değil
+    # SONRA yapıyoruz -- aksi halde, metnin başka bir yerinde geçen "X için
+    # düzenleme yoktur" gibi bir ifade, başka bir yerde gerçekten var olan
+    # bir UN numarasını yanlışlıkla ezip "kapsam dışı" gösterebilirdi.
+    # Gerçek veri bulunduğunda HER ZAMAN ona güvenilir.
+    if explicit_not_in_scope(sec14):
+        result["adr_kapsaminda"] = False
         return result
 
     # ÖNEMLİ (güvenlik): Hiçbir yöntem UN no bulamadıysa VE açık bir
