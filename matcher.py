@@ -261,11 +261,14 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
     if match is None:
         row["PAKETLEME GRUBU"] = pg or MANUAL_REVIEW_TEXT
     else:
-        # Eşleşme bulunduysa PG zaten doğrulanmış demektir -- pg boşsa bu
-        # HATA değil, bu UN/sınıf için ADR'de paketleme grubu olmadığı
-        # anlamına gelir (örn. gazlar, Sınıf 1, bazı Sınıf 7). Böyle
-        # durumda hücre boş bırakılır, "MANUEL KONTROL GEREKLİ" YAZILMAZ.
-        row["PAKETLEME GRUBU"] = pg if pg else None
+        # Eşleşme bulunduysa, Paketleme Grubu'nu PDF'ten gelen (bazen
+        # tutarsız/hatalı olabilen) değer yerine DOĞRUDAN Tablo A'nın
+        # eşleşen satırından çekiyoruz -- diğer tüm alanlar (Uygun
+        # Sevkiyat Adı, Tank Kodu vb.) da zaten aynı şekilde Tablo A'dan
+        # geliyor, tutarlı olsun. Tablo A'da bu UN/sınıf için PG yoksa
+        # (örn. gazlar, Sınıf 1) bu None'dır ve hücre boş bırakılır --
+        # "MANUEL KONTROL GEREKLİ" YAZILMAZ, çünkü bu bir hata değildir.
+        row["PAKETLEME GRUBU"] = match["paketleme_grubu"]
 
     if match is None:
         row.update({
