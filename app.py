@@ -123,6 +123,8 @@ def render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix):
 st.title("🧪 Kimyasal Envanter Oluşturucu")
 st.caption("MSDS PDF → Bölüm 14 (Taşıma Bilgileri) → ADR Tablo A eşleştirme → Envanter Excel")
 
+QR_KOD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "qr_kod.png")
+
 with st.sidebar:
     st.header("0) Şablon Versiyonu")
     versiyon = st.radio(
@@ -203,6 +205,13 @@ with st.sidebar:
             else:
                 st.info("Devam etmek için envanter Excel dosyasını yükleyin.")
 
+    # ── QR Kod (sidebar en alt) ──────────────────────────────────────────
+    st.divider()
+    if os.path.exists(QR_KOD_PATH):
+        st.image(QR_KOD_PATH, caption="Kimyasal Envanter Uygulaması", use_container_width=True)
+    else:
+        st.caption("⚠️ QR kod bulunamadı: data/qr_kod.png")
+
 st.header("2) MSDS PDF'lerini Yükle")
 pdf_files = st.file_uploader(
     "Bir veya birden çok MSDS PDF dosyası seçin",
@@ -268,7 +277,7 @@ if pdf_files and envanter_path and tablo_a_hazir:
         info = urun["info"]
         durum = (
             "🔴 PDF OKUNAMADI (dosya bozuk olabilir)" if info.get("okuma_hatasi")
-            else "🟢 ADR kapsamında - UN No okundu" if info.get("adr_kapsaminda") and info.get("un_no")
+            else "🟢 ADR kapsamında - Tablo A eşleşmesi bulundu" if info.get("adr_kapsaminda") and info.get("un_no")
             else "⚪ ADR kapsamında değil" if info.get("adr_kapsaminda") is False
             else "🟠 MANUEL KONTROL GEREKLİ (Bölüm 14 otomatik okunamadı)"
         )
