@@ -213,57 +213,70 @@ with st.sidebar:
         st.caption("⚠️ QR kod bulunamadı: data/qr_kod.png")
 
 st.header("2) MSDS PDF'lerini Yükle")
-pdf_files = st.file_uploader(
-    "Bir veya birden çok MSDS PDF dosyası seçin",
-    type=["pdf"], accept_multiple_files=True, key="pdfs",
-)
+
+if "pdf_uploader_key" not in st.session_state:
+    st.session_state.pdf_uploader_key = 0
+
+col_upload, col_clear = st.columns([4, 1])
+with col_upload:
+    pdf_files = st.file_uploader(
+        "Bir veya birden çok MSDS PDF dosyası seçin",
+        type=["pdf"], accept_multiple_files=True,
+        key=f"pdfs_{st.session_state.pdf_uploader_key}",
+    )
+with col_clear:
+    st.write("")  # dikey hizalama için boşluk
+    if st.button("🗑️ PDF Yükleme Alanını Temizle"):
+        st.session_state.pdf_uploader_key += 1  # file_uploader'ı sıfırlamak için
+        st.rerun()
 
 mevcut_isimler = existing_names(envanter_path) if (envanter_path and not v2) else set()
 
 tablo_a_hazir = v2 or os.path.exists(TABLO_A_PATH)
 
-if pdf_files and envanter_path and tablo_a_hazir:
-    yeni_pdfler = [p for p in pdf_files if p.name not in st.session_state.urunler]
+if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
+    if pdf_files:
+        yeni_pdfler = [p for p in pdf_files if p.name not in st.session_state.urunler]
 
-    if yeni_pdfler:
-        toplam = len(yeni_pdfler)
-        ilerleme_metni = st.empty()
-        ilerleme_cubugu = st.progress(0.0)
+        if yeni_pdfler:
+            toplam = len(yeni_pdfler)
+            ilerleme_metni = st.empty()
+            ilerleme_cubugu = st.progress(0.0)
 
-        for i, pdf in enumerate(yeni_pdfler, start=1):
-            ilerleme_metni.write(f"📄 İşleniyor: **{pdf.name}** ({i}/{toplam})")
-            pdf_path = save_upload(pdf, subdir="pdf")
-            try:
-                info = extract_adr_info(pdf_path)
-            except Exception as e:
-                # Bozuk/okunamayan bir PDF tüm toplu işlemi durdurmasın --
-                # bu ürün "manuel kontrol gerekli" olarak işaretlenir,
-                # diğer PDF'lerin işlenmesine devam edilir.
-                info = {
-                    "revize_tarihi": None, "onerilen_ad": None, "un_no": None,
-                    "sinif": None, "paketleme_grubu": None, "adr_kapsaminda": None,
-                    "ham_metin_bulundu": False, "tedarikci": None, "fonksiyon": None,
-                    "cas_no": None, "h_kodlari": None, "tehlikeli_tehlikesiz": None,
-                    "tehlike_etiketi": None, "okuma_hatasi": str(e),
+            for i, pdf in enumerate(yeni_pdfler, start=1):
+                ilerleme_metni.write(f"📄 İşleniyor: **{pdf.name}** ({i}/{toplam})")
+                pdf_path = save_upload(pdf, subdir="pdf")
+                try:
+                    info = extract_adr_info(pdf_path)
+                except Exception as e:
+                    # Bozuk/okunamayan bir PDF tüm toplu işlemi durdurmasın --
+                    # bu ürün "manuel kontrol gerekli" olarak işaretlenir,
+                    # diğer PDF'lerin işlenmesine devam edilir.
+                    info = {
+                        "revize_tarihi": None, "onerilen_ad": None, "un_no": None,
+                        "sinif": None, "paketleme_grubu": None, "adr_kapsaminda": None,
+                        "ham_metin_bulundu": False, "tedarikci": None, "fonksiyon": None,
+                        "cas_no": None, "h_kodlari": None, "tehlikeli_tehlikesiz": None,
+                        "tehlike_etiketi": None, "okuma_hatasi": str(e),
+                    }
+                # Kimyasal Adı önce PDF İÇERİĞİNDEN aranır; içerikte bulunamazsa
+                # PDF dosya adına geri dönülür -- ama clean_product_name() bu
+                # dosya adındaki "MSDS", "TR-SDS", "rev 7" gibi gerçek ürün adı
+                # olmayan ekleri temizler, ham dosya adı asla yazılmaz.
+                onerilen_ad = clean_product_name(info.get("onerilen_ad") or os.path.splitext(pdf.name)[0])
+                st.session_state.urunler[pdf.name] = {
+                    "pdf_path": pdf_path,
+                    "info": info,
+                    "kimyasal_adi": onerilen_ad,
+                    "ambalaj": "Ambalaj" if v2 else "AMBALAJLI",
+                    "logo_path": None,
+                    "dahil_et": True,
                 }
-            # Kimyasal Adı önce PDF İÇERİĞİNDEN aranır; içerikte bulunamazsa
-            # PDF dosya adına geri dönülür -- ama clean_product_name() bu
-            # dosya adındaki "MSDS", "TR-SDS", "rev 7" gibi gerçek ürün adı
-            # olmayan ekleri temizler, ham dosya adı asla yazılmaz.
-            onerilen_ad = clean_product_name(info.get("onerilen_ad") or os.path.splitext(pdf.name)[0])
-            st.session_state.urunler[pdf.name] = {
-                "pdf_path": pdf_path,
-                "info": info,
-                "kimyasal_adi": onerilen_ad,
-                "ambalaj": "Ambalaj" if v2 else "AMBALAJLI",
-                "logo_path": None,
-                "dahil_et": True,
-            }
-            ilerleme_cubugu.progress(i / toplam)
+                ilerleme_cubugu.progress(i / toplam)
 
-        ilerleme_metni.empty()
-        ilerleme_cubugu.empty()
-        st.toast(f"✅ {toplam} PDF işlendi", icon="✅")
+            ilerleme_metni.empty()
+            ilerleme_cubugu.empty()
+            st.toast(f"✅ {toplam} PDF işlendi", icon="✅")
 
     st.divider()
     secili_urunler = [u for u in st.session_state.urunler.values() if u["dahil_et"]]
@@ -350,5 +363,5 @@ if pdf_files and envanter_path and tablo_a_hazir:
     render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix="bottom")
 elif not envanter_path:
     st.info("Önce sol menüden envanter Excel dosyasını yükleyin.")
-else:
+elif not st.session_state.urunler:
     st.info("İşlenecek MSDS PDF dosyalarını yükleyin.")
