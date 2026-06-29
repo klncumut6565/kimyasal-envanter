@@ -2,6 +2,7 @@ import io
 import os
 import re
 import tempfile
+import time
 
 import streamlit as st
 from openpyxl import load_workbook
@@ -53,6 +54,15 @@ def existing_names(envanter_path):
         return names
     except Exception:
         return set()
+
+
+def _sure_formatla(saniye: float) -> str:
+    """Saniyeyi 'X dk Y sn' veya 'Y sn' şeklinde okunaklı metne çevirir."""
+    saniye = max(0, int(round(saniye)))
+    if saniye < 60:
+        return f"{saniye} sn"
+    dk, sn = divmod(saniye, 60)
+    return f"{dk} dk {sn} sn"
 
 
 def render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix):
@@ -245,9 +255,17 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
             toplam = len(yeni_pdfler)
             ilerleme_metni = st.empty()
             ilerleme_cubugu = st.progress(0.0)
+            baslangic_zamani = time.time()
 
             for i, pdf in enumerate(yeni_pdfler, start=1):
-                ilerleme_metni.write(f"📄 İşleniyor: **{pdf.name}** ({i}/{toplam})")
+                if i == 1:
+                    kalan_metin = ""
+                else:
+                    gecen = time.time() - baslangic_zamani
+                    ortalama = gecen / (i - 1)
+                    kalan = ortalama * (toplam - i + 1)
+                    kalan_metin = f" — ⏳ Tahmini kalan süre: {_sure_formatla(kalan)}"
+                ilerleme_metni.write(f"📄 İşleniyor: **{pdf.name}** ({i}/{toplam}){kalan_metin}")
                 pdf_path = save_upload(pdf, subdir="pdf")
                 try:
                     info = extract_adr_info(pdf_path)
