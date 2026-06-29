@@ -555,42 +555,42 @@ def parse_numbered_subsections(sec14_text: str):
 
     sinif = None
 
-    m = re.search(
-        r"14\s*\.?\s*3\b\.?\s*[^\n]{0,60}?S[ıi]N[ıi]F.{0,150}?\b(\d+(?:\.\d+)?)\b",
-        adr_window,
-        re.IGNORECASE | re.DOTALL
-    )
-
-    if m and m.group(1) == str(un_no):
-
-        # yanlışlıkla UN numarasını yakaladıysa
-        rest = adr_window[m.end():m.end() + 150]
-
-        m_next = re.search(
-            r"\b(\d+(?:\.\d+)?)\b",
-            rest
-        )
-
-        m = (
-            m_next
-            if (m_next and m_next.group(1) != str(un_no))
-            else None
-        )
-
-    if m:
-        sinif = m.group(1)
-
-    # Türkçe fallback
-    if sinif is None:
-
+    # 14.3 başlığı + SINIF kelimesi + sayı (adr_window ve sec14_text'e bak)
+    for _search_text in (adr_window, sec14_text):
         m = re.search(
-            r"(?:SINIFI|TEHLİKE SINIFI|ADR SINIFI)"
-            r".{0,40}?\b(\d+(?:\.\d+)?)\b",
-            adr_window,
+            r"14\s*\.?\s*3\b\.?\s*[^\n]{0,60}?S[ıi]N[ıi]F.{0,150}?\b(\d+(?:\.\d+)?)\b",
+            _search_text,
             re.IGNORECASE | re.DOTALL
         )
+        if m and m.group(1) != str(un_no):
+            sinif = m.group(1)
+            break
+        if m and m.group(1) == str(un_no):
+            # yanlışlıkla UN numarasını yakaladıysa
+            rest = _search_text[m.end():m.end() + 150]
+            m_next = re.search(r"\b(\d+(?:\.\d+)?)\b", rest)
+            if m_next and m_next.group(1) != str(un_no):
+                sinif = m_next.group(1)
+                break
 
-        if m:
+    # "Taşıma sınıfı(ları) 9" formatı için ek fallback
+    if sinif is None:
+        m = re.search(
+            r"14\s*\.?\s*3\b[^\n]{0,80}?\b(\d+(?:\.\d+)?)\s*$",
+            sec14_text,
+            re.IGNORECASE | re.MULTILINE
+        )
+        if m and m.group(1) != str(un_no):
+            sinif = m.group(1)
+
+    # Türkçe fallback: "SINIFI / TEHLİKE SINIFI / ADR SINIFI / Taşıma sınıfı"
+    if sinif is None:
+        m = re.search(
+            r"(?:Ta[şs][ıi]ma\s+)?S[ıi]N[ıi]F[ıi]?(?:\([^)]*\))?\s*[:\-]?\s*(\d+(?:\.\d+)?)",
+            sec14_text,
+            re.IGNORECASE
+        )
+        if m and m.group(1) != str(un_no):
             sinif = m.group(1)
 
     # ADR SINIFI NOSU 8
@@ -622,6 +622,26 @@ def parse_numbered_subsections(sec14_text: str):
     # ---------------------------------------------------------
 
     pg = None
+
+    # 14.4 başlığını hem adr_window hem sec14_text'te ara
+    for _pg_text in (adr_window, sec14_text):
+        m_pg = re.search(
+            r"14\s*\.?\s*4\b[^\n]{0,80}?\b(I{1,3})\b",
+            _pg_text,
+            re.IGNORECASE
+        )
+        if m_pg:
+            pg = m_pg.group(1)
+            break
+
+    if pg is None:
+        m_pg = re.search(
+            r"14\s*\.?\s*4\b[^\n]{0,80}?\b(I{1,3})\s*$",
+            sec14_text,
+            re.IGNORECASE | re.MULTILINE
+        )
+        if m_pg:
+            pg = m_pg.group(1)
 
     m = re.search(
         r"14\s*\.?\s*4\b\.?\s*[^\n]{0,60}?GRUBU.{0,150}?\b(I{1,3})\b",
