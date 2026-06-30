@@ -76,11 +76,16 @@ def extract_revize_tarihi(text: str):
     # PDF font kodlaması bazen "ğ" gibi karakterleri boşluğa çeviriyor
     # ("Edildiği" -> "Edildi i"); bu yüzden ortadaki kısma sıkı bağlı değiliz.
     # "Reviz\w*" -> "Revize", "Revizyon", "Revizyonu" gibi tüm türevleri yakalar.
+    #
+    # Tarih değeri sadece sayısal ("12.02.2019") olabildiği gibi, Türkçe
+    # ay adıyla yazılı ("12 Şubat 2019", örn. HABAŞ şablonu) da olabilir;
+    # bu yüzden değer deseni her ikisini de kapsıyor.
+    tarih_degeri = r"(\d{1,2}[./]\d{1,2}[./]\d{2,4}|\d{1,2}\s+\w+\s+\d{4})"
     patterns = [
-        r"Reviz\w*\b.{0,15}[Tt]arih\w*\s*:?\s*([\d./]+)",
-        r"Yeni\s+düzen\w*\s+tarihi\s*:?\s*([\d./]+)",
-        r"Yay[ıi]n\s*[Tt]arihi\s*:?\s*([\d./]+)",
-        r"\bRevision\s*:?\s*([\d./]+)",  # İngilizce MSDS
+        r"Reviz\w*\b.{0,15}[Tt]arih\w*\s*:?\s*" + tarih_degeri,
+        r"Yeni\s+düzen\w*\s+tarihi\s*:?\s*" + tarih_degeri,
+        r"Yay[ıi]n\s*[Tt]arihi\s*:?\s*" + tarih_degeri,
+        r"\bRevision\s*:?\s*" + tarih_degeri,  # İngilizce MSDS
     ]
     for p in patterns:
         m = re.search(p, text, re.IGNORECASE)
@@ -133,7 +138,19 @@ _COMPANY_SUFFIX = r"(A\.?Ş\.?|Ltd\.?\s*Şti\.?|GmbH|Sanayi|San\.|Ticaret|Tic\.|
 def extract_tedarikci(text: str):
     """Bölüm 1.3'ten tedarikçi/üretici firma adını çıkarır."""
     bolum1 = find_section_text(text, 1, 2) or text[:3000]
-    m = re.search(r"Tedarikçi\s*\n?\s*([^\n]{3,90})", bolum1)
+    # "Firma Adı :" etiketi (örn. HABAŞ şablonu) -- bunu "Tedarikçi"
+    # etiketinden ÖNCE deniyoruz çünkü "Tedarikçi" kelimesi genelde
+    # "Tedarikçisinin Bilgileri" gibi bir başlığın içinde çekim ekiyle
+    # geçer ve aşağıdaki "Tedarikçi" deseni o ekin devamını ("sinin
+    # Bilgileri") yanlışlıkla firma adı diye yakalayabilir.
+    m = re.search(r"Firma\s+Ad[ıi]\s*:?\s*\n?\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+    # "Tedarikçi" etiketi -- yalnızca kelime sınırında bittiğinde
+    # ("Tedarikçi :" veya "Tedarikçi\n") eşleştiriyoruz; "Tedarikçisinin"
+    # gibi bir çekim ekiyle devam ediyorsa bu, başlığın bir parçasıdır,
+    # değer etiketi değildir.
+    m = re.search(r"Tedarikçi\b(?!sinin|nin|si)\s*\n?\s*:?\s*([^\n]{3,90})", bolum1)
     if m and m.group(1).strip():
         return m.group(1).strip()
     m = re.search(r"Produc\w*\s+Company\s*\n?\s*([^\n]{3,90})", bolum1, re.IGNORECASE)  # İngilizce MSDS
@@ -165,6 +182,11 @@ def extract_fonksiyon(text: str):
         r"(?m)^\s*" + _esnek_desen("Kullanım alanı") + r"\b\s*:\s*([^\n]{3,80})",
         r"(?m)^\s*Kullanim\s*:\s*\n?\s*([^\n]{3,80})",
         r"(?m)^\s*Relevant\s+identified\s+uses\s*:?\s*([^\n]{3,80})",  # İngilizce MSDS
+        # HABAŞ tarzı şablon: başlık satırın ortasında geçiyor ("1.2.
+        # Madde veya Karışımın Belirlenmiş Kullanımları ve Tavsiye
+        # Edilmeyen Kullanımları") ve değer doğrudan ALT satırda, ayrı
+        # bir etiket/iki nokta olmadan başlıyor.
+        r"(?i)Belirlenmi[şs]\s+[Kk]ullan[ıi]mlar[ıi]?\b[^\n]*\n\s*([^\n]{3,200})",
     ]
     for p in patterns:
         m = re.search(p, bolum1, re.IGNORECASE)
@@ -212,6 +234,11 @@ def extract_uyari_kelimesi(text: str):
     if m and m.group(1).strip():
         return m.group(1).strip()
     m = re.search(r"İşaret\s+[Kk]elime\w*\s*:?\s*\n?\s*([^\n]{2,30})", bolum2)
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+    # "İşaret Sözcüğü :" etiketi (örn. HABAŞ şablonu) -- "Kelime" yerine
+    # eş anlamlı "Sözcük" kelimesi kullanılıyor.
+    m = re.search(r"İşaret\s+[Ss]özc[üu][ğg][üu]\s*:?\s*\n?\s*([^\n]{2,30})", bolum2)
     if m and m.group(1).strip():
         return m.group(1).strip()
     return None
@@ -277,8 +304,18 @@ def _is_section_label(line: str, label: str) -> bool:
 
 
 NOT_IN_SCOPE_PATTERNS = [
-    r"kapsam\w*\s+(de|dı)[ğg]?ildir",          # "...kapsamında değildir" / "kapsamı dışındadır" / ASCII "degildir" varyasyonları
-    r"kapsam\w*\s+dı[şs][ıi]ndad[ıi]r",
+    # "...kapsamında değildir" / "kapsamı dışındadır" -- ÖNEMLİ (güvenlik):
+    # bu ifade öncesinde "tehlikeli madde/mal", "taşımacılık/nakliye" veya
+    # "ADR/RID/IMDG/IATA" gibi gerçekten ADR kapsamıyla ilgili bir kelime
+    # geçmesi ZORUNLU. Aksi halde Bölüm 14.7 "Marpol ... bu kapsamda
+    # değildir" gibi ADR ile hiç ilgisi olmayan, başka bir mevzuata
+    # (Marpol/IBC) atıfta bulunan cümleler yanlışlıkla "ADR kapsamında
+    # değil" sanılıp tehlikeli bir madde "kapsam dışı" işaretlenebilir
+    # (örn. Argon/HABAŞ şablonu).
+    r"(tehlikeli\s+(madde|mal)|ta[şs][ıi]mac[ıi]l[ıi][ğg]?[ıi]?|nakliye|ADR|RID|IMDG|IATA)"
+    r"[^.\n]{0,60}?kapsam\w*\s+(de|dı)[ğg]?ildir",
+    r"(tehlikeli\s+(madde|mal)|ta[şs][ıi]mac[ıi]l[ıi][ğg]?[ıi]?|nakliye|ADR|RID|IMDG|IATA)"
+    r"[^.\n]{0,60}?kapsam\w*\s+dı[şs][ıi]ndad[ıi]r",
     r"tehlikeli\s+madde\s+(de|dı)[ğg]?ildir",
     r"tehlikeli\s+mal\s+(de|dı)[ğg]?ildir",                       # "Tehlikeli mal değildir"
     r"tehlikeli\s+madde\s+olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r",
@@ -301,7 +338,27 @@ def explicit_not_in_scope(section14_text: str) -> bool:
     ürünün ADR kapsamı dışında olduğunu, sadece "ADR" satırının
     yokluğuna bakarak değil, doğrudan metinden anlarız."""
     for p in NOT_IN_SCOPE_PATTERNS:
-        if re.search(p, section14_text, re.IGNORECASE):
+        for m in re.finditer(p, section14_text, re.IGNORECASE):
+            # ÖNEMLİ (güvenlik): eşleşmenin başladığı noktadan biraz
+            # öncesine bakarak, cümlenin asıl konusunun Marpol/IBC gibi
+            # ADR ile ilgisi olmayan başka bir mevzuat olup olmadığını
+            # kontrol ediyoruz. Örn. "14.7 Marpol ... IBC Koduna Göre
+            # Toplu Taşımacılık: Bu kapsamda değildir." cümlesinde
+            # "Taşımacılık" kelimesi regex'in bağlam testini geçer, ama
+            # "Marpol"/"IBC Kod" eşleşmeden ÖNCE geçtiği için asıl konu
+            # ADR/RID/IMDG/IATA değildir -- bu durumda eşleşmeyi geçersiz
+            # sayıyoruz (örn. Argon/HABAŞ şablonu) ve aynı desen için
+            # metnin kalanında başka bir (gerçek) eşleşme olup olmadığına
+            # bakmaya devam ediyoruz.
+            onceki_tam = section14_text[:m.start()]
+            # Aynı cümlenin başına kadar geri git (son nokta veya satır
+            # sonu); önceki cümlede geçen "Marpol" kelimesi bu eşleşmeyi
+            # etkilememeli.
+            cumle_baslangic = max(
+                onceki_tam.rfind("."), onceki_tam.rfind("\n")) + 1
+            onceki = section14_text[cumle_baslangic:m.start()]
+            if re.search(r"marpol|\bIBC\s*Kod", onceki, re.IGNORECASE):
+                continue
             return True
     # "14.1 UN Numarası : N/A" / İngilizce "14.1. UN ... number: None" gibi
     # UN no alanının açıkça boş/uygulanamaz olarak işaretlenmesi de güçlü
@@ -422,6 +479,17 @@ def parse_numbered_subsections(sec14_text: str):
             m = re.search(rf"\bUN\s*{re.escape(str(un_no))}\s+(\d+(?:\.\d+)?)\.(I{{1,3}})\b", sec14_text)
             if m:
                 sinif = m.group(1)
+            else:
+                # HABAŞ tarzı şablon: "14.1. ADR:" alt-bloğu içinde "ADR"
+                # kelimesi olmadan, satır başında numarasız düz "Sınıfı :"
+                # etiketi (örn. "Sınıfı : 2"). Satır başına bağlıyoruz ki
+                # "Etiket Bilgisi : 2.2" gibi başka bir satırla karışmasın
+                # ve "Sınıflandırılması" gibi farklı bir kelimeye kaymasın.
+                m = re.search(
+                    r"(?im)^\s*S[ıi]n[ıi]f[ıi]?\s*:?\s*(\d+(?:\.\d+)?)\b",
+                    sec14_text)
+                if m and m.group(1) != str(un_no):
+                    sinif = m.group(1)
 
     pg = None
     m = re.search(
