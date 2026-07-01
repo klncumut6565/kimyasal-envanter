@@ -440,14 +440,14 @@ def parse_numbered_subsections(sec14_text: str):
     """
     un_no = None
     m = re.search(
-        r"14\s*\.?\s*1\b\.?\s*UN[\s-]*NUMARAS[ıi].{0,150}?\b(\d{3,4})\b",
+        r"14\s*\.?\s*1\b\.?\s*[ÜU]N[\s-]*NUMARAS[ıi].{0,150}?\b(\d{3,4})\b",
         sec14_text, re.IGNORECASE | re.DOTALL)
     if m:
         un_no = m.group(1)
     else:
         # "UN NO. KARAYOLU 3412" gibi numaralı alt başlık olmadan düz
         # "UN NO. <bir şeyler> <sayı>" etiketi (örn. SETACID VS-N şablonu).
-        m = re.search(r"\bUN\s*N[Oo]\.?.{0,30}?\b(\d{3,4})\b", sec14_text, re.DOTALL)
+        m = re.search(r"\b[ÜU]N\s*N[Oo]\.?.{0,30}?\b(\d{3,4})\b", sec14_text, re.DOTALL)
         if m:
             un_no = m.group(1)
         else:
@@ -508,12 +508,26 @@ def parse_numbered_subsections(sec14_text: str):
             if m and _gecerli_sinif(m.group(1), un_no):
                 sinif = m.group(1)
         if sinif is None:
-            # "UN 1832 8.II" gibi UN no'nun hemen ardından gelen
+            # "ADR ÜN 1832 8.II" gibi UN no'nun hemen ardından gelen
             # "Sınıf.PaketlemeGrubu" birleşik kısaltması (tek satırlık
             # özet format).
             m = re.search(rf"\bUN\s*{re.escape(str(un_no))}\s+(\d+(?:\.\d+)?)\.(I{{1,3}})\b", sec14_text)
             if m and _gecerli_sinif(m.group(1), un_no):
                 sinif = m.group(1)
+        if sinif is None:
+            # "ADR ÜN 2014 ... 5.1, P.G. II" tarzı satır içi birleşik
+            # format: mod adı + ÜN/UN + no + uzun isim (parantez içinde
+            # virgül olabilir) + virgül + sınıf + virgül + P.G.
+            # [^,\n]* parantez içindeki virgüle takılır; bu yüzden
+            # ADR/ÜN/UN içeren satırı izole edip P.G. öncesi sınıfı arıyoruz.
+            m = re.search(
+                rf"(?m)^[^\n]*\bADR\b[^\n]*[ÜU]N\s+{re.escape(str(un_no))}[^\n]*",
+                sec14_text, re.IGNORECASE)
+            if m:
+                satir = m.group(0)
+                m_pg = re.search(r",\s*(\d+(?:\.\d+)?)\s*,\s*P[\.\s]*G\.", satir, re.IGNORECASE)
+                if m_pg and _gecerli_sinif(m_pg.group(1), un_no):
+                    sinif = m_pg.group(1)
         if sinif is None:
             # HABAŞ tarzı şablon: "14.1. ADR:" alt-bloğu içinde "ADR"
             # kelimesi olmadan, satır başında numarasız düz "Sınıfı :"
