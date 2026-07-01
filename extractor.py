@@ -543,6 +543,34 @@ def parse_numbered_subsections(sec14_text: str):
                 sec14_text)
             if m and _gecerli_sinif(m.group(1), un_no):
                 sinif = m.group(1)
+        if sinif is None:
+            # "Taşımacılık Sınıfı: 8" veya "Transport Class: 8" etiketi
+            # (örn. Setacid/DyStar birleşik format — her mod için ayrı
+            # satırda tekrar eden etiket).
+            m = re.search(
+                r"(?im)^\s*Ta[şsĢģ][ıi]mac[ıi]l[ıi][kğĞ]\s*S[ıi]n[ıi]f[ıi]\s*:\s*(\d+(?:\.\d+)?)\b",
+                sec14_text)
+            if not m:
+                m = re.search(
+                    r"(?im)^\s*Transport\s+(?:Hazard\s+)?Class\s*:\s*(\d+(?:\.\d+)?)\b",
+                    sec14_text, re.IGNORECASE)
+            if m and _gecerli_sinif(m.group(1), un_no):
+                sinif = m.group(1)
+        if sinif is None:
+            # "UN 1760 AŞINDIRICI SIVI, B.B.B., 8, III" gibi P.G. olmadan
+            # sadece virgülle ayrılmış sınıf ve PG içeren satır içi format.
+            # UN no içeren satırı izole edip son iki virgüllü token'ı alıyoruz.
+            m = re.search(
+                rf"(?m)^[^\n]*\b[ÜU]N\s+{re.escape(str(un_no))}\b[^\n]*$",
+                sec14_text, re.IGNORECASE)
+            if m:
+                satir = m.group(0)
+                # Son iki virgülle ayrılmış kısım: "..., sınıf, PG"
+                parcalar = [p.strip() for p in satir.split(',')]
+                if len(parcalar) >= 2:
+                    aday = parcalar[-2].strip()  # PG'den önceki = sınıf
+                    if _gecerli_sinif(aday, un_no):
+                        sinif = aday
     else:
         sinif = m.group(1)
 
@@ -567,6 +595,18 @@ def parse_numbered_subsections(sec14_text: str):
             m = re.search(rf"\bUN\s*{re.escape(str(un_no))}\s+\d+(?:\.\d+)?\.(I{{1,3}})\b", sec14_text)
             if m:
                 pg = m.group(1)
+            else:
+                # "Ambalajlama Grubu: III" veya "Packing Group: III" etiketi
+                # (örn. Setacid/DyStar birleşik format — her mod için ayrı satırda).
+                m = re.search(
+                    r"(?im)^\s*Ambalajlama\s+Gru[bp][üu]\s*:\s*(I{1,3})\b",
+                    sec14_text)
+                if not m:
+                    m = re.search(
+                        r"(?im)^\s*Packing\s+Group\s*:\s*(I{1,3})\b",
+                        sec14_text, re.IGNORECASE)
+                if m:
+                    pg = m.group(1)
 
     return {"un_no": un_no, "sinif": sinif, "paketleme_grubu": pg}
 
