@@ -123,14 +123,14 @@ def find_section_text(text: str, section_no: int, next_section_no: int = None):
     metnini izole eder. Hem 'N.' hem 'BÖLÜM N:' hem 'KISIM N :' hem de
     noktasız 'N Başlık' stillerini tanır (üreticiye göre değişiyor)."""
     pattern = (rf"(?im)^\s*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*{section_no}"
-               r"\s*(?:[-.:]\s+|\s+(?=[A-ZÇĞİÖŞÜ]))")
+               r"\s*(?:[-.:]\s*|\s+(?=[A-ZÇĞİÖŞÜa-zçğışöü]))")
     m_start = re.search(pattern, text)
     if not m_start:
         return None
     start = m_start.start()
     end_no = next_section_no if next_section_no else section_no + 1
     end_pattern = (rf"(?im)^\s*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*{end_no}"
-                   r"\s*(?:[-.:]\s+|\s+(?=[A-ZÇĞİÖŞÜ]))")
+                   r"\s*(?:[-.:]\s*|\s+(?=[A-ZÇĞİÖŞÜa-zçğışöü]))")
     m_end = re.search(end_pattern, text[start:])
     end = start + m_end.start() if m_end else min(len(text), start + 4000)
     return text[start:end]
@@ -308,7 +308,7 @@ def find_section14_text(text: str):
     Bu yüzden "14.", "BÖLÜM 14:" ve noktasız "14 BAŞLIK" stillerine bakıyoruz,
     "14.1" gibi alt başlıklarla karıştırmıyoruz.
     """
-    pattern = r"(?im)^\s*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*14\s*(?:[-.:]\s+|\s+(?=[A-ZÇĞİÖŞÜ]))"
+    pattern = r"(?im)^\s*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*14\s*(?:[-.:]\s*|\s+(?=[A-ZÇĞİÖŞÜa-zçğışöü]))"
     m_start = re.search(pattern, text)
     if not m_start:
         # Fallback: başlık resimde kalmış olabilir; ilk "14.1" alt başlığından itibaren al
@@ -316,7 +316,7 @@ def find_section14_text(text: str):
         if not m_start:
             return None
     start = m_start.start()
-    end_pattern = r"(?im)^\s*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*15\s*(?:[-.:]\s+|\s+(?=[A-ZÇĞİÖŞÜ]))"
+    end_pattern = r"(?im)^\s*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*15\s*(?:[-.:]\s*|\s+(?=[A-ZÇĞİÖŞÜa-zçğışöü]))"
     m_end = re.search(end_pattern, text[start:])
     end = start + m_end.start() if m_end else len(text)
     return text[start:end]
@@ -346,6 +346,8 @@ NOT_IN_SCOPE_PATTERNS = [
     r"tehlikeli\s+madde\s+(de|dı)[ğg]?ildir",
     r"tehlikeli\s+mal\s+(de|dı)[ğg]?ildir",                       # "Tehlikeli mal değildir"
     r"tehlikeli\s+madde\s+olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r",
+    r"tehlikeli\s+madde\s+olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmaz",   # "...sınıflandırılmaz" (geniş zaman, Jakazol formatı)
+    r"tehlikeli\s+kimyasal\s+madde\s+olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r",  # "tehlikeli kimyasal madde olarak..."
     r"tehlikeli\s+madde\s+olarak\s+düzenlenmemi[şsĢģ]t[ıi]r",        # "Tehlikeli madde olarak düzenlenmemiştir" (Ģ: CHT font bozulması)
     r"tehlikeli\s+madde\s+s[ıi]n[ıi]f[ıi]na\s+girmez",             # "...tehlikeli madde sınıfına girmez"
     r"\bdüzenleme\s+yoktur\b",                                     # "Düzenleme yoktur"
