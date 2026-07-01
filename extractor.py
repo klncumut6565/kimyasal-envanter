@@ -176,6 +176,14 @@ def extract_tedarikci(text: str):
         m = re.search(r"Mümessil\s+Firma\s*\n\s*([^\n]{3,90})", aralik, re.IGNORECASE)
         if m and m.group(1).strip():
             return m.group(1).strip()
+    # "Üretici   HANGZHOU..." sütun formatı (MGVB/eski şablon — büyük boşluklu)
+    for aralik in [bolum1, text[:2000]]:
+        m = re.search(r"Üretici\s{2,}([^\n]{3,90})", aralik, re.IGNORECASE)
+        if m and m.group(1).strip():
+            return m.group(1).strip()
+        m = re.search(r"Üretici\s+Firma\s*\n\s*([^\n]{3,90})", aralik, re.IGNORECASE)
+        if m and m.group(1).strip():
+            return m.group(1).strip()
     return None
 
 
@@ -222,21 +230,23 @@ def extract_cas_no(text: str):
     bileşen olabileceğinden, etiketli ilk eşleşme (veya genel CAS
     deseninin ilk örneği -- tablo düzenli MSDS'ler için yedek) alınır."""
     bolum3 = find_section_text(text, 3, 4)
-    if not bolum3:
-        return None
-    m = re.search(r"CAS\s*[-_.]?\s*[Nn]umaras[ıi]\s*:?\s*(\d{2,7}-\d{2}-\d)", bolum3)
-    if m:
-        return m.group(1)
-    m = re.search(r"CAS[\s.-]*[Nn]o\.?\s*:?\s*(\d{2,7}-\d{2}-\d)", bolum3)
-    if m:
-        return m.group(1)
-    m = re.search(r"\b(\d{2,7}-\d{2}-\d)\b", bolum3)  # tablo düzeni için genel yedek
-    if m:
-        return m.group(1)
-    # Tiresiz CAS (örn. "32041630") — Bölüm 1 veya 3'te "CAS no/No." etiketi yanında
     bolum1 = find_section_text(text, 1, 2) or text[:2000]
-    for bolum in [bolum3, bolum1]:
-        m = re.search(r"CAS\s*[-_.]?\s*[Nn]o\.?\s*:?\s*(\d{6,10})\b", bolum)
+
+    for aralik in [bolum3, bolum1, text[:3000]]:
+        if not aralik:
+            continue
+        m = re.search(r"CAS\s*[-_.]?\s*[Nn]umaras[ıi]\s*:?\s*(\d{2,7}-\d{2}-\d)", aralik)
+        if m:
+            return m.group(1)
+        # "CAS No   2309-94-6" sütun formatı (MGVB şablonu — büyük boşluklu)
+        m = re.search(r"CAS[\s.-]*[Nn]o\.?\s*(\d{2,7}-\d{2}-\d)", aralik)
+        if m:
+            return m.group(1)
+        m = re.search(r"\b(\d{2,7}-\d{2}-\d)\b", aralik)  # tablo düzeni için genel yedek
+        if m:
+            return m.group(1)
+        # Tiresiz CAS (örn. "32041630") — Bölüm 1 veya 3'te "CAS no/No." etiketi yanında
+        m = re.search(r"CAS\s*[-_.]?\s*[Nn]o\.?\s*:?\s*(\d{6,10})\b", aralik)
         if m:
             return m.group(1)
     return None
@@ -373,6 +383,8 @@ NOT_IN_SCOPE_PATTERNS = [
     # RID/IMDG/IATA satırları bizim alanı etkilemez; sadece ADR satırı
     # "yoktur" diyorsa ürün ADR kapsamı dışındadır.
     r"(?m)^\s*ADR\s+K[ıi]s[ıi]tlama\s+yoktur",
+    # "ADR Sınırlı değil" formatı — eski MGVB şablonları (Hangzhou/Jihua tarzı)
+    r"(?m)^\s*ADR\s+S[ıi]n[ıi]rl[ıi]\s+de[ğg]il",
 ]
 
 
