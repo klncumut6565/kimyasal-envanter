@@ -328,6 +328,7 @@ NOT_IN_SCOPE_PATTERNS = [
     r"tehlikeli\s+madde\s+olarak\s+düzenlenmemi[şsĢģ]t[ıi]r",        # "Tehlikeli madde olarak düzenlenmemiştir" (Ģ: CHT font bozulması)
     r"tehlikeli\s+madde\s+s[ıi]n[ıi]f[ıi]na\s+girmez",             # "...tehlikeli madde sınıfına girmez"
     r"\bdüzenleme\s+yoktur\b",                                     # "Düzenleme yoktur"
+    r"s[ıi]n[ıi]fland[ıi]rma\s+belirtilmemi[şsĢģ]tir",           # "Sınıflandırma belirtilmemiştir" (Ģ: CHT font bozulması)
     # İngilizce MSDS'lerde görülen açık "kapsam dışı" ifadeleri
     r"not\s+(?:included|classified)\s+(?:as\s+)?(?:any\s+)?(?:dangerous\s+goods|transport\s+class)",
     r"not\s+regulated\s+(?:for|as)\s+transport",
