@@ -123,14 +123,14 @@ def find_section_text(text: str, section_no: int, next_section_no: int = None):
     metnini izole eder. Hem 'N.' hem 'BÖLÜM N:' hem 'KISIM N :' hem de
     noktasız 'N Başlık' stillerini tanır (üreticiye göre değişiyor)."""
     pattern = (rf"(?im)^\s*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*{section_no}"
-               r"\s*(?:[.:]\s+|\s+(?=[A-ZÇĞİÖŞÜ]))")
+               r"\s*(?:[-.:]\s+|\s+(?=[A-ZÇĞİÖŞÜ]))")
     m_start = re.search(pattern, text)
     if not m_start:
         return None
     start = m_start.start()
     end_no = next_section_no if next_section_no else section_no + 1
     end_pattern = (rf"(?im)^\s*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*{end_no}"
-                   r"\s*(?:[.:]\s+|\s+(?=[A-ZÇĞİÖŞÜ]))")
+                   r"\s*(?:[-.:]\s+|\s+(?=[A-ZÇĞİÖŞÜ]))")
     m_end = re.search(end_pattern, text[start:])
     end = start + m_end.start() if m_end else min(len(text), start + 4000)
     return text[start:end]
@@ -166,6 +166,10 @@ def extract_tedarikci(text: str):
             line = line.strip()
             if line and re.search(_COMPANY_SUFFIX, line, re.IGNORECASE):
                 return line
+    # "1.3.1 ... tedarikçi bilgiler ; Firma Adı" — değer etiketle aynı satırda
+    m = re.search(r"1\.3\.1[^\n]*tedarik\w*\s+bilgi\w*\s*;\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
+    if m and m.group(1).strip():
+        return m.group(1).strip()
     return None
 
 
@@ -223,6 +227,12 @@ def extract_cas_no(text: str):
     m = re.search(r"\b(\d{2,7}-\d{2}-\d)\b", bolum3)  # tablo düzeni için genel yedek
     if m:
         return m.group(1)
+    # Tiresiz CAS (örn. "32041630") — Bölüm 1 veya 3'te "CAS no/No." etiketi yanında
+    bolum1 = find_section_text(text, 1, 2) or text[:2000]
+    for bolum in [bolum3, bolum1]:
+        m = re.search(r"CAS\s*[-_.]?\s*[Nn]o\.?\s*:?\s*(\d{6,10})\b", bolum)
+        if m:
+            return m.group(1)
     return None
 
 
@@ -298,12 +308,15 @@ def find_section14_text(text: str):
     Bu yüzden "14.", "BÖLÜM 14:" ve noktasız "14 BAŞLIK" stillerine bakıyoruz,
     "14.1" gibi alt başlıklarla karıştırmıyoruz.
     """
-    pattern = r"(?im)^\s*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*14\s*(?:[.:]\s+|\s+(?=[A-ZÇĞİÖŞÜ]))"
+    pattern = r"(?im)^\s*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*14\s*(?:[-.:]\s+|\s+(?=[A-ZÇĞİÖŞÜ]))"
     m_start = re.search(pattern, text)
     if not m_start:
-        return None
+        # Fallback: başlık resimde kalmış olabilir; ilk "14.1" alt başlığından itibaren al
+        m_start = re.search(r"(?im)^\s*14\.1\b", text)
+        if not m_start:
+            return None
     start = m_start.start()
-    end_pattern = r"(?im)^\s*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*15\s*(?:[.:]\s+|\s+(?=[A-ZÇĞİÖŞÜ]))"
+    end_pattern = r"(?im)^\s*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*15\s*(?:[-.:]\s+|\s+(?=[A-ZÇĞİÖŞÜ]))"
     m_end = re.search(end_pattern, text[start:])
     end = start + m_end.start() if m_end else len(text)
     return text[start:end]
