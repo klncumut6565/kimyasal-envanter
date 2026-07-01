@@ -712,6 +712,25 @@ def extract_adr_info(pdf_path: str):
                 result["sinif"] = parsed["sinif"]
                 result["paketleme_grubu"] = parsed["paketleme_grubu"]
                 return result
+            else:
+                # parse_adr_first_line ilk satırı tanıyamadı — blok satırları
+                # "etiket\ndeğer" çiftleri şeklinde olabilir (BASF/Clariant tarzı).
+                # Satırları çift çift okuyarak UN no, sınıf ve PG çıkaralım.
+                block_text = "\n".join(block)
+                import re as _re
+                _un = _re.search(r"\bUN\s*[-]?\s*(\d{3,4})\b", block_text)
+                _sinif = _re.search(
+                    r"zararlılık\s+s[ıi]n[ıi]f[^\n]*\n\s*(\d+(?:\.\d+)?)\b",
+                    block_text, _re.IGNORECASE)
+                _pg = _re.search(
+                    r"(?:Ambalaj\s+gur?ubu|Packing\s+[Gg]roup)[^\n]*\n\s*(I{1,3})\b",
+                    block_text, _re.IGNORECASE)
+                if _un:
+                    result["adr_kapsaminda"] = True
+                    result["un_no"] = _un.group(1)
+                    result["sinif"] = _sinif.group(1) if _sinif else None
+                    result["paketleme_grubu"] = _pg.group(1) if _pg else None
+                    return result
 
     # Yöntem 2: "14.1. UN NUMARASI" / "14.3. ... SINIFI" / "14.4. AMBALAJLAMA
     # GRUBU" gibi numaralı alt başlık + değer deseni (örn. AK-KİM şablonu).
