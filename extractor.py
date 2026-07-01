@@ -528,7 +528,14 @@ def parse_numbered_subsections(sec14_text: str):
             if m and _gecerli_sinif(m.group(1), un_no):
                 sinif = m.group(1)
         if sinif is None:
-            # "ADR ÜN 2014 ... 5.1, P.G. II" tarzı satır içi birleşik
+            # "SINIF    5.1    5.1    ..." tablo formatı — satır başında
+            # büyük harfle "SINIF" etiketi, ardından boşluklar ve değer
+            # (örn. AK-KİM çok modlu tablo şablonu).
+            m = re.search(
+                r"(?im)^\s*S[Iİıi]N[Iİıi]F\s+(\d+(?:\.\d+)?)\b",
+                sec14_text)
+            if m and _gecerli_sinif(m.group(1), un_no):
+                sinif = m.group(1)
             # format: mod adı + ÜN/UN + no + uzun isim (parantez içinde
             # virgül olabilir) + virgül + sınıf + virgül + P.G.
             # [^,\n]* parantez içindeki virgüle takılır; bu yüzden
@@ -628,12 +635,19 @@ def parse_numbered_subsections(sec14_text: str):
                 if m:
                     pg = m.group(1)
                 else:
-                    # "14.4 Ambalaj grubu\nADR/RID: III" formatı
+                    # "PAKETLEME GRUBU    II    II    ..." tablo formatı
                     m = re.search(
-                        r"14\s*\.?\s*4\b[^\n]*\n\s*ADR[/\w]*\s*:\s*(I{1,3})\b",
-                        sec14_text, re.IGNORECASE)
+                        r"(?im)^\s*PAKETLEME\s+GRUBU\s+(I{1,3})\b",
+                        sec14_text)
                     if m:
                         pg = m.group(1)
+                    else:
+                        # "14.4 Ambalaj grubu\nADR/RID: III" formatı
+                        m = re.search(
+                            r"14\s*\.?\s*4\b[^\n]*\n\s*ADR[/\w]*\s*:\s*(I{1,3})\b",
+                            sec14_text, re.IGNORECASE)
+                        if m:
+                            pg = m.group(1)
 
     return {"un_no": un_no, "sinif": sinif, "paketleme_grubu": pg}
 
