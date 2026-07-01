@@ -86,6 +86,7 @@ def extract_revize_tarihi(text: str):
         r"Yeni\s+düzen\w*\s+tarihi\s*:?\s*" + tarih_degeri,
         r"Yay[ıi]n\s*[Tt]arihi\s*:?\s*" + tarih_degeri,
         r"\bRevision\s*:?\s*" + tarih_degeri,  # İngilizce MSDS
+        r"\bRevision\s+Date\s*:?\s*" + tarih_degeri,  # "Revision Date: 12.12.2020" sütun formatı
         # BASF formatı: "Tarih / gözden geçirilme tarihi: 31.01.2018"
         r"[Tt]arih\s*/\s*gözden\s+geçirilme\s+tarihi\s*:\s*" + tarih_degeri,
     ]
@@ -105,6 +106,7 @@ def extract_suggested_name(text: str):
         r"Ticari ad[ıi]\s*:?\s*(.+)",
         r"Ürün ad[ıi]\s*:?\s*(.+)",
         r"Product\s*Name\s*:?\s*(.+)",  # İngilizce MSDS
+        r"Trade\s*Name\s*:?\s*(.+)",    # "Trade Name: KROMOFIX..." İngilizce şablon
         # BASF formatı: header'da "Ürün: Hydrosulfite F"
         r"(?m)^\s*Ürün:\s*(.+?)\s*$",
     ]
@@ -281,6 +283,10 @@ def extract_uyari_kelimesi(text: str):
     m = re.search(r"Sinyal\s+kelime\s*:?\s*\n?\s*(Tehlike|Dikkat)\b", bolum2, re.IGNORECASE)
     if m:
         return m.group(1).strip()
+    # İngilizce MSDS: "Signal Word: Attention/Warning/Danger" → Türkçe karşılığa çevir
+    m = re.search(r"Signal\s+Word\s*:?\s*\n?\s*(Attention|Warning|Danger)\b", bolum2, re.IGNORECASE)
+    if m:
+        return {"attention": "Dikkat", "warning": "Dikkat", "danger": "Tehlike"}.get(m.group(1).lower(), m.group(1))
     return None
 
 
@@ -387,6 +393,8 @@ NOT_IN_SCOPE_PATTERNS = [
     r"(?m)^\s*ADR\s+K[ıi]s[ıi]tlama\s+yoktur",
     # "ADR Sınırlı değil" formatı — eski MGVB şablonları (Hangzhou/Jihua tarzı)
     r"(?m)^\s*ADR\s+S[ıi]n[ıi]rl[ıi]\s+de[ğg]il",
+    # "ADR : Not classified as hazardous." — İngilizce Tekay şablonu
+    r"(?m)^\s*ADR\s*:\s*Not\s+classified\s+as\s+hazardous",
 ]
 
 
