@@ -330,6 +330,7 @@ NOT_IN_SCOPE_PATTERNS = [
     r"\bdüzenleme\s+yoktur\b",                                     # "Düzenleme yoktur"
     r"s[ıi]n[ıi]fland[ıi]rma\s+belirtilmemi[şsĢģ]tir",           # "Sınıflandırma belirtilmemiştir" (Ģ: CHT font bozulması)
     r"s[ıi]n[ıi]fland[ıi]rma\s+yap[ıi]lmam[ıi][şsĢģ]t[ıi]r",   # "Sınıflandırma Yapılmamıştır" (Everlight şablonu)
+    r"s[ıi]n[ıi]fland[ıi]r[ıi]lm[ıi][şsĢģ]\s+de[ğg]ildir",      # "Sınıflandırılmış değildir" (karayolu/demiryolu notları)
     # İngilizce MSDS'lerde görülen açık "kapsam dışı" ifadeleri
     r"not\s+(?:included|classified)\s+(?:as\s+)?(?:any\s+)?(?:dangerous\s+goods|transport\s+class)",
     r"not\s+regulated\s+(?:for|as)\s+transport",
