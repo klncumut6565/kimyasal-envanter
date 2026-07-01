@@ -170,6 +170,12 @@ def extract_tedarikci(text: str):
     m = re.search(r"1\.3\.1[^\n]*tedarik\w*\s+bilgi\w*\s*;\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
         return m.group(1).strip()
+    # "Mümessil Firma\nFirma Adı" — Türkiye'deki yaygın format (Jay/Tekay şablonu)
+    # Mümessil = yerel tedarikçi; üretici firma değil, biz onu alıyoruz.
+    for aralik in [bolum1, text[:4000]]:
+        m = re.search(r"Mümessil\s+Firma\s*\n\s*([^\n]{3,90})", aralik, re.IGNORECASE)
+        if m and m.group(1).strip():
+            return m.group(1).strip()
     return None
 
 
