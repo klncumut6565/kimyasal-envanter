@@ -2,6 +2,7 @@
 ADR Tablo A (ADR_A_TABLOSU.xlsx) üzerinde UN No + Sınıf + Paketleme Grubu
 ile tam eşleştirme yapan modül.
 """
+import re
 import openpyxl
 
 NOT_IN_SCOPE_TEXT = "SDS RAPORU BÖLÜM 14 KONTROLÜNE İSTİNADEN ÜRÜN ADR KAPSAMINDA DEĞİLDİR"
@@ -240,7 +241,16 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
         #      ama resmi sınıf '6.1') -- bu durumda MSDS'i hazırlayan
         #      firmanın hatası olabilir, bildirilmesi mantıklı.
         official_sinif = get_official_sinif_for_un(tablo_a_path, un_no)
-        sinif_bos = not str(sinif).strip() or str(sinif).strip().lower() == "none"
+        # ÖNEMLİ: "14.4", "14.5" gibi bir değer gerçek sınıf değil, PDF
+        # çıkarıcının Bölüm 14 alt bölüm numarasını yanlışlıkla sınıf
+        # diye okumasından kaynaklanır. Bu durumda uyarı mesajı "MSDS'te
+        # yanlış sınıf yazılı" değil, "sınıf okunamadı" olmalıdır.
+        sinif_is_subsection = bool(re.match(r"^14\.\d+$", str(sinif).strip()))
+        sinif_bos = (
+            not str(sinif).strip()
+            or str(sinif).strip().lower() == "none"
+            or sinif_is_subsection
+        )
         if official_sinif and (sinif_bos or official_sinif != str(sinif).strip()):
             duzeltilmis_match = match_tablo_a(
                 tablo_a_path,
@@ -294,7 +304,12 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
         # Resmi sınıfla bile eşleşme bulunamadıysa (örn. PG de yanlış
         # olabilir), en azından tespit edilen sınıf tutarsızlığını bildir.
         official_sinif = get_official_sinif_for_un(tablo_a_path, un_no)
-        sinif_bos = not str(sinif).strip() or str(sinif).strip().lower() == "none"
+        sinif_is_subsection = bool(re.match(r"^14\.\d+$", str(sinif).strip()))
+        sinif_bos = (
+            not str(sinif).strip()
+            or str(sinif).strip().lower() == "none"
+            or sinif_is_subsection
+        )
         if official_sinif and (sinif_bos or official_sinif != str(sinif).strip()):
             if sinif_bos:
                 row["Açıklama"] = (

@@ -453,43 +453,75 @@ def parse_numbered_subsections(sec14_text: str):
         return None
 
     sinif = None
+
+    def _gecerli_sinif(val: str, un_no: str) -> bool:
+        """ADR tehlike sınıfı olarak geçerli bir değer mi?
+        ADR sınıfları 1-9 arasındadır (1, 1.4, 2.2, 3, 6.1, 8, 9 vb.).
+        Tamsayı kısmı 9'u aşan her değer (10, 11, 14.3, 14.4 …) bir
+        sınıf değil, başka bir sayıdır — reddedilir. UN no'nun kendisi
+        de reddedilir."""
+        if not val or val == str(un_no):
+            return False
+        try:
+            tamsayi = int(str(val).split(".")[0])
+        except ValueError:
+            return False
+        return 1 <= tamsayi <= 9
+
     m = re.search(
         r"14\s*\.?\s*3\b\.?\s*[^\n]{0,60}?S[ıi]N[ıi]F.{0,150}?\b(\d+(?:\.\d+)?)\b",
         sec14_text, re.IGNORECASE | re.DOTALL)
+    if m and not _gecerli_sinif(m.group(1), un_no):
+        m = None
     if m and m.group(1) == str(un_no):
         # İlk bulunan sayı UN no'nun kendisinin tekrarı olabilir (örn.
         # açıklayıcı metinde "ADR ÜN 2014 ... 5.1, P.G. II" gibi UN no
         # önce geçiyorsa) -- aynı pencerede bir sonraki sayıyı dene.
         rest = sec14_text[m.end():m.end() + 150]
         m_next = re.search(r"\b(\d+(?:\.\d+)?)\b", rest)
-        m = m_next if (m_next and m_next.group(1) != str(un_no)) else None
-    if m:
-        sinif = m.group(1)
-    else:
+        m = m_next if (m_next and _gecerli_sinif(m_next.group(1), un_no)) else None
+    # AK-KİM tarzı çapraz tablo formatı: başlık "14.3. TAŞIMACILIK
+    # ZARARLILIK" şeklinde SINIF kelimesi olmadan biter; değer satırı
+    # (örn. "8  8  8  8") sonraki satırda, "SINIFI" kelimesi daha
+    # sonra geliyor. Bu yüzden [^\n]{0,60}?SINIF deseni eşleşmiyor.
+    # Bu formatta "14.3." başlığının hemen altındaki satırdan ADR
+    # sütununa karşılık gelen ilk sayıyı alıyoruz. Ana 14.3 deseni
+    # başarılı olduysa (m != None) bu bloğa girmiyoruz.
+    if m is None:
+        m_akkim = re.search(
+            r"14\s*\.?\s*3\b[^\n]*\n\s*(\d+(?:\.\d+)?)\b",
+            sec14_text, re.IGNORECASE)
+        if m_akkim and _gecerli_sinif(m_akkim.group(1), un_no):
+            sinif = m_akkim.group(1)
         # "ADR SINIFI NOSU. 8" gibi numaralı alt başlık olmadan düz etiket.
-        m = re.search(
-            r"\bADR\w*\s*S[ıi]N[ıi]F\w*.{0,30}?\b(\d+(?:\.\d+)?)\b",
-            sec14_text, re.IGNORECASE | re.DOTALL)
-        if m and m.group(1) != str(un_no):
-            sinif = m.group(1)
-        else:
+        if sinif is None:
+            m = re.search(
+                r"\bADR\w*\s*S[ıi]N[ıi]F\w*.{0,30}?\b(\d+(?:\.\d+)?)\b",
+                sec14_text, re.IGNORECASE | re.DOTALL)
+            if m and _gecerli_sinif(m.group(1), un_no):
+                sinif = m.group(1)
+        if sinif is None:
             # "UN 1832 8.II" gibi UN no'nun hemen ardından gelen
             # "Sınıf.PaketlemeGrubu" birleşik kısaltması (tek satırlık
             # özet format).
             m = re.search(rf"\bUN\s*{re.escape(str(un_no))}\s+(\d+(?:\.\d+)?)\.(I{{1,3}})\b", sec14_text)
-            if m:
+            if m and _gecerli_sinif(m.group(1), un_no):
                 sinif = m.group(1)
-            else:
-                # HABAŞ tarzı şablon: "14.1. ADR:" alt-bloğu içinde "ADR"
-                # kelimesi olmadan, satır başında numarasız düz "Sınıfı :"
-                # etiketi (örn. "Sınıfı : 2"). Satır başına bağlıyoruz ki
-                # "Etiket Bilgisi : 2.2" gibi başka bir satırla karışmasın
-                # ve "Sınıflandırılması" gibi farklı bir kelimeye kaymasın.
-                m = re.search(
-                    r"(?im)^\s*S[ıi]n[ıi]f[ıi]?\s*:?\s*(\d+(?:\.\d+)?)\b",
-                    sec14_text)
-                if m and m.group(1) != str(un_no):
-                    sinif = m.group(1)
+        if sinif is None:
+            # HABAŞ tarzı şablon: "14.1. ADR:" alt-bloğu içinde "ADR"
+            # kelimesi olmadan, satır başında numarasız düz "Sınıfı :"
+            # etiketi (örn. "Sınıfı : 2"). İKİ NOKTA (:) ZORUNLU
+            # tutuyoruz -- AK-KİM tarzı tablolarda başlık satırından
+            # taşan "SINIFI" kelimesi satır başında tek başına görünür
+            # (iki nokta yoktur); iki nokta şartı bu yanlış eşleşmeyi
+            # engeller. _gecerli_sinif() ek güvence sağlar.
+            m = re.search(
+                r"(?im)^\s*S[ıi]n[ıi]f[ıi]?\s*:\s*(\d+(?:\.\d+)?)\b",
+                sec14_text)
+            if m and _gecerli_sinif(m.group(1), un_no):
+                sinif = m.group(1)
+    else:
+        sinif = m.group(1)
 
     pg = None
     m = re.search(
