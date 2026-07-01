@@ -107,6 +107,7 @@ def extract_suggested_name(text: str):
         r"Ürün ad[ıi]\s*:?\s*(.+)",
         r"Product\s*Name\s*:?\s*(.+)",  # İngilizce MSDS
         r"Trade\s*Name\s*:?\s*(.+)",    # "Trade Name: KROMOFIX..." İngilizce şablon
+        r"(?m)^\s*Unvan[ıi]\s+(.+?)\s*$",  # "Unvanı   LAUFIX E" sütun formatı (ERCA GROUP)
         # BASF formatı: header'da "Ürün: Hydrosulfite F"
         r"(?m)^\s*Ürün:\s*(.+?)\s*$",
     ]
@@ -150,6 +151,10 @@ def extract_tedarikci(text: str):
     # geçer ve aşağıdaki "Tedarikçi" deseni o ekin devamını ("sinin
     # Bilgileri") yanlışlıkla firma adı diye yakalayabilir.
     m = re.search(r"Firma\s+Ad[ıi]\s*:?\s*\n?\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+    # "Şirket Unvanı   ERCA GROUP..." sütun formatı — etiket + büyük boşluk + değer
+    m = re.search(r"[Şş]irket\s+Unvan[ıi]\s{2,}([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
         return m.group(1).strip()
     # "Tedarikçi" etiketi -- yalnızca kelime sınırında bittiğinde
@@ -527,9 +532,11 @@ def parse_numbered_subsections(sec14_text: str):
                 if m:
                     un_no = m.group(1)
                 else:
-                    # Bazı şablonlarda Bölüm 14'ün en başında "UN 2790-ASETİK ASİT..."
-                    # şeklinde özet bir satır da bulunur.
-                    m = re.search(r"\bUN\s*[-:]?\s*(\d{3,4})\b", sec14_text)
+                    # "ADR / RID, IMDG, IATA:   3082" sütun formatı
+                    # (ERCA GROUP şablonu — 14.1 altında mod listesi + değer)
+                    m = re.search(
+                        r"ADR\s*/\s*RID[^:\n]*:\s*(\d{3,4})\b",
+                        sec14_text, re.IGNORECASE)
                     if m:
                         un_no = m.group(1)
     if not un_no:
@@ -743,6 +750,14 @@ def parse_numbered_subsections(sec14_text: str):
                                     sec14_text, re.IGNORECASE)
                                 if m:
                                     pg = m.group(1)
+                                else:
+                                    # "ADR / RID, IMDG,   III" — PG değeri mod listesiyle
+                                    # aynı satırda, büyük boşluklu sütun (ERCA GROUP şablonu)
+                                    m = re.search(
+                                        r"ADR\s*/\s*RID[^:\n]*\s{2,}(I{1,3})\b",
+                                        sec14_text, re.IGNORECASE)
+                                    if m:
+                                        pg = m.group(1)
 
     return {"un_no": un_no, "sinif": sinif, "paketleme_grubu": pg}
 
