@@ -464,11 +464,19 @@ def parse_numbered_subsections(sec14_text: str):
             if m:
                 un_no = m.group(1)
             else:
-                # Bazı şablonlarda Bölüm 14'ün en başında "UN 2790-ASETİK ASİT..."
-                # şeklinde özet bir satır da bulunur.
-                m = re.search(r"\bUN\s*[-:]?\s*(\d{3,4})\b", sec14_text)
+                # "UN-numarası\nUN1384" formatı — başlık alt satırda
+                # "UN<rakam>" şeklinde birleşik yazılmış (tire ile de olabilir).
+                m = re.search(
+                    r"[ÜU]N[-\s]*numara[sş][ıi]\s*\n\s*[ÜU]N\s*[-]?\s*(\d{3,4})\b",
+                    sec14_text, re.IGNORECASE)
                 if m:
                     un_no = m.group(1)
+                else:
+                    # Bazı şablonlarda Bölüm 14'ün en başında "UN 2790-ASETİK ASİT..."
+                    # şeklinde özet bir satır da bulunur.
+                    m = re.search(r"\bUN\s*[-:]?\s*(\d{3,4})\b", sec14_text)
+                    if m:
+                        un_no = m.group(1)
     if not un_no:
         return None
 
@@ -525,6 +533,14 @@ def parse_numbered_subsections(sec14_text: str):
             # "Sınıf.PaketlemeGrubu" birleşik kısaltması (tek satırlık
             # özet format).
             m = re.search(rf"\bUN\s*{re.escape(str(un_no))}\s+(\d+(?:\.\d+)?)\.(I{{1,3}})\b", sec14_text)
+            if m and _gecerli_sinif(m.group(1), un_no):
+                sinif = m.group(1)
+        if sinif is None:
+            # "Taşımacılık zararlılık sınıf(lar)ı:\n4.2" formatı —
+            # etiket satırı, değer alt satırda tek başına (tire/boşuksuz).
+            m = re.search(
+                r"Ta[şsĢģ][ıi]mac[ıi]l[ıi][kğĞ]\s+zararlılık\s+s[ıi]n[ıi]f[^\n]*\n\s*(\d+(?:\.\d+)?)\b",
+                sec14_text, re.IGNORECASE)
             if m and _gecerli_sinif(m.group(1), un_no):
                 sinif = m.group(1)
         if sinif is None:
@@ -648,6 +664,14 @@ def parse_numbered_subsections(sec14_text: str):
                             sec14_text, re.IGNORECASE)
                         if m:
                             pg = m.group(1)
+                        else:
+                            # "Ambalaj gurubu:\nII" formatı — etiket+iki nokta,
+                            # değer alt satırda tek başına (gurup/grup varyasyonu).
+                            m = re.search(
+                                r"Ambalaj\s+gur?ubu\s*:?\s*\n\s*(I{1,3})\b",
+                                sec14_text, re.IGNORECASE)
+                            if m:
+                                pg = m.group(1)
 
     return {"un_no": un_no, "sinif": sinif, "paketleme_grubu": pg}
 
