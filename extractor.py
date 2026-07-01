@@ -364,6 +364,8 @@ NOT_IN_SCOPE_PATTERNS = [
     r"tehlikeli\s+madde\s+olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r",
     r"tehlikeli\s+madde\s+olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmaz",   # "...sınıflandırılmaz" (geniş zaman, Jakazol formatı)
     r"tehlikeli\s+kimyasal\s+madde\s+olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r",  # "tehlikeli kimyasal madde olarak..."
+    # "Taşıma yönetmelik kapsamında tehlikeli olarak sınıflandırılmamıştır"
+    r"ta[şs][ıi]ma\s+yönetmelik\s+kapsam[ıi]nda\s+tehlikeli\s+olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r",
     r"tehlikeli\s+madde\s+olarak\s+düzenlenmemi[şsĢģ]t[ıi]r",        # "Tehlikeli madde olarak düzenlenmemiştir" (Ģ: CHT font bozulması)
     r"tehlikeli\s+madde\s+s[ıi]n[ıi]f[ıi]na\s+girmez",             # "...tehlikeli madde sınıfına girmez"
     r"\bdüzenleme\s+yoktur\b",                                     # "Düzenleme yoktur"
