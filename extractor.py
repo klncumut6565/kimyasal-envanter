@@ -469,7 +469,7 @@ def parse_numbered_subsections(sec14_text: str):
         return 1 <= tamsayi <= 9
 
     m = re.search(
-        r"14\s*\.?\s*3\b\.?\s*[^\n]{0,60}?S[ıi]N[ıi]F.{0,150}?\b(\d+(?:\.\d+)?)\b",
+        r"14\s*\.?\s*3\b\.?\s*[^\n]{0,60}?S[ıi]N[ıi]F.{0,300}?\b(\d+(?:\.\d+)?)\b",
         sec14_text, re.IGNORECASE | re.DOTALL)
     if m and not _gecerli_sinif(m.group(1), un_no):
         m = None
