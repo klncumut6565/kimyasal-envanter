@@ -86,6 +86,8 @@ def extract_revize_tarihi(text: str):
         r"Yeni\s+düzen\w*\s+tarihi\s*:?\s*" + tarih_degeri,
         r"Yay[ıi]n\s*[Tt]arihi\s*:?\s*" + tarih_degeri,
         r"\bRevision\s*:?\s*" + tarih_degeri,  # İngilizce MSDS
+        # BASF formatı: "Tarih / gözden geçirilme tarihi: 31.01.2018"
+        r"[Tt]arih\s*/\s*gözden\s+geçirilme\s+tarihi\s*:\s*" + tarih_degeri,
     ]
     for p in patterns:
         m = re.search(p, text, re.IGNORECASE)
@@ -103,6 +105,8 @@ def extract_suggested_name(text: str):
         r"Ticari ad[ıi]\s*:?\s*(.+)",
         r"Ürün ad[ıi]\s*:?\s*(.+)",
         r"Product\s*Name\s*:?\s*(.+)",  # İngilizce MSDS
+        # BASF formatı: header'da "Ürün: Hydrosulfite F"
+        r"(?m)^\s*Ürün:\s*(.+?)\s*$",
     ]
     for p in patterns:
         m = re.search(p, text, re.IGNORECASE)
@@ -246,6 +250,10 @@ def extract_uyari_kelimesi(text: str):
     # eş anlamlı "Sözcük" kelimesi kullanılıyor.
     m = re.search(r"İşaret\s+[Ss]özc[üu][ğg][üu]\s*:?\s*\n?\s*([^\n]{2,30})", bolum2)
     if m and m.group(1).strip():
+        return m.group(1).strip()
+    # BASF formatı: "Sinyal kelime:\nTehlike" — etiket alt satırda
+    m = re.search(r"Sinyal\s+kelime\s*:?\s*\n?\s*(Tehlike|Dikkat)\b", bolum2, re.IGNORECASE)
+    if m:
         return m.group(1).strip()
     return None
 
@@ -544,6 +552,15 @@ def parse_numbered_subsections(sec14_text: str):
             if m and _gecerli_sinif(m.group(1), un_no):
                 sinif = m.group(1)
         if sinif is None:
+            # BASF formatı: "Taşımacılık zararlılık 4.2\nsınıf(lar)ı:" —
+            # değer etiketle aynı satırda, ama "sınıf(lar)ı:" kısmı alt satıra
+            # taşmış. Değer ilk satırın sonunda bulunur.
+            m = re.search(
+                r"Ta[şsĢģ][ıi]mac[ıi]l[ıi][kğĞ]\s+zararlılık\s+(\d+(?:\.\d+)?)\s*\n\s*s[ıi]n[ıi]f",
+                sec14_text, re.IGNORECASE)
+            if m and _gecerli_sinif(m.group(1), un_no):
+                sinif = m.group(1)
+        if sinif is None:
             # "SINIF    5.1    5.1    ..." tablo formatı — satır başında
             # büyük harfle "SINIF" etiketi, ardından boşluklar ve değer
             # (örn. AK-KİM çok modlu tablo şablonu).
@@ -672,6 +689,13 @@ def parse_numbered_subsections(sec14_text: str):
                                 sec14_text, re.IGNORECASE)
                             if m:
                                 pg = m.group(1)
+                            else:
+                                # BASF formatı: "Ambalaj gurubu:   II" aynı satırda
+                                m = re.search(
+                                    r"Ambalaj\s+gur?ubu\s*:\s*(I{1,3})\b",
+                                    sec14_text, re.IGNORECASE)
+                                if m:
+                                    pg = m.group(1)
 
     return {"un_no": un_no, "sinif": sinif, "paketleme_grubu": pg}
 
@@ -722,9 +746,19 @@ def extract_adr_info(pdf_path: str):
                 _sinif = _re.search(
                     r"zararlılık\s+s[ıi]n[ıi]f[^\n]*\n\s*(\d+(?:\.\d+)?)\b",
                     block_text, _re.IGNORECASE)
+                if not _sinif:
+                    # BASF formatı: değer etiketle aynı satırda, "sınıf(lar)ı:" alt satırda
+                    _sinif = _re.search(
+                        r"zararlılık\s+(\d+(?:\.\d+)?)\s*\n\s*s[ıi]n[ıi]f",
+                        block_text, _re.IGNORECASE)
                 _pg = _re.search(
                     r"(?:Ambalaj\s+gur?ubu|Packing\s+[Gg]roup)[^\n]*\n\s*(I{1,3})\b",
                     block_text, _re.IGNORECASE)
+                if not _pg:
+                    # BASF formatı: "Ambalaj gurubu:   II" aynı satırda
+                    _pg = _re.search(
+                        r"Ambalaj\s+gur?ubu\s*:\s*(I{1,3})\b",
+                        block_text, _re.IGNORECASE)
                 if _un:
                     result["adr_kapsaminda"] = True
                     result["un_no"] = _un.group(1)
@@ -766,3 +800,4 @@ if __name__ == "__main__":
         print("=" * 80)
         print(path)
         print(extract_adr_info(path))
+
