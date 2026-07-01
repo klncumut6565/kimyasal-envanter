@@ -456,11 +456,19 @@ def parse_numbered_subsections(sec14_text: str):
         if m:
             un_no = m.group(1)
         else:
-            # Bazı şablonlarda Bölüm 14'ün en başında "UN 2790-ASETİK ASİT..."
-            # şeklinde özet bir satır da bulunur.
-            m = re.search(r"\bUN\s*[-:]?\s*(\d{3,4})\b", sec14_text)
+            # "UN numarası\nADR/RID: 1805 IMDG: 1805" formatı — başlık
+            # numarasız, değer ADR/RID: etiketi ile geliyor.
+            m = re.search(
+                r"[ÜU]N\s+numara[sş][ıi]\s*\n\s*ADR[/\w]*\s*:\s*(\d{3,4})\b",
+                sec14_text, re.IGNORECASE)
             if m:
                 un_no = m.group(1)
+            else:
+                # Bazı şablonlarda Bölüm 14'ün en başında "UN 2790-ASETİK ASİT..."
+                # şeklinde özet bir satır da bulunur.
+                m = re.search(r"\bUN\s*[-:]?\s*(\d{3,4})\b", sec14_text)
+                if m:
+                    un_no = m.group(1)
     if not un_no:
         return None
 
@@ -560,6 +568,15 @@ def parse_numbered_subsections(sec14_text: str):
             if m and _gecerli_sinif(m.group(1), un_no):
                 sinif = m.group(1)
         if sinif is None:
+            # "14.3 Nakliyat tehlike sınf(lar)ı\nADR/RID: 8" formatı —
+            # 14.3 başlığı var, değer hemen altında "ADR/RID: 8" şeklinde.
+            # "sınf" (ı düşmüş) font bozulması da tolere edilir.
+            m = re.search(
+                r"14\s*\.?\s*3\b[^\n]*\n\s*ADR[/\w]*\s*:\s*(\d+(?:\.\d+)?)\b",
+                sec14_text, re.IGNORECASE)
+            if m and _gecerli_sinif(m.group(1), un_no):
+                sinif = m.group(1)
+        if sinif is None:
             # "UN 1760 AŞINDIRICI SIVI, B.B.B., 8, III" gibi P.G. olmadan
             # sadece virgülle ayrılmış sınıf ve PG içeren satır içi format.
             # UN no içeren satırı izole edip son iki virgüllü token'ı alıyoruz.
@@ -610,6 +627,13 @@ def parse_numbered_subsections(sec14_text: str):
                         sec14_text, re.IGNORECASE)
                 if m:
                     pg = m.group(1)
+                else:
+                    # "14.4 Ambalaj grubu\nADR/RID: III" formatı
+                    m = re.search(
+                        r"14\s*\.?\s*4\b[^\n]*\n\s*ADR[/\w]*\s*:\s*(I{1,3})\b",
+                        sec14_text, re.IGNORECASE)
+                    if m:
+                        pg = m.group(1)
 
     return {"un_no": un_no, "sinif": sinif, "paketleme_grubu": pg}
 
