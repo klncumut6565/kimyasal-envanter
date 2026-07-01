@@ -348,6 +348,10 @@ NOT_IN_SCOPE_PATTERNS = [
     r"no(?:t)?\s+dangerous\s+goods\s+(?:for|in)\s+transport",
     r"not\s+dangerous\s+goods\b",                                  # "Not dangerous goods"
     r"not\s+a\s+dot\s+controlled\s+material",                      # ABD DOT formatı
+    # "ADR Kısıtlama yoktur / RID Kısıtlama yoktur / ..." formatı —
+    # her satırda mod adı + "Kısıtlama yoktur"; ADR/RID/IMDG/IATA
+    # kelimesiyle başlayan satırda kısıtlama olmadığı belirtiliyor.
+    r"(?:ADR|RID|IMDG|IATA|ADNR|ADN)\s+K[ıi]s[ıi]tlama\s+yoktur",
 ]
 
 
