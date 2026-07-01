@@ -331,6 +331,7 @@ NOT_IN_SCOPE_PATTERNS = [
     # İngilizce MSDS'lerde görülen açık "kapsam dışı" ifadeleri
     r"not\s+(?:included|classified)\s+(?:as\s+)?(?:any\s+)?(?:dangerous\s+goods|transport\s+class)",
     r"not\s+regulated\s+(?:for|as)\s+transport",
+    r"not\s+regulated\s+as\s+(?:a\s+)?dangerous",   # "Not regulated as a dangerous good/goods" veya "as dangerous goods"
     r"no(?:t)?\s+dangerous\s+goods\s+(?:for|in)\s+transport",
     r"not\s+dangerous\s+goods\b",                                  # "Not dangerous goods"
     r"not\s+a\s+dot\s+controlled\s+material",                      # ABD DOT formatı
