@@ -169,8 +169,14 @@ def _esnek_desen(kelime: str) -> str:
     """Bir kelimeyi, içindeki ı/İ/ş/Ş/ğ/Ğ harfleri PDF font bozulmasıyla
     tamamen düşmüş olsa bile (örn. 'belirlenmiş' -> 'belirlenmi',
     'kullanımları' -> 'kullanmlar') eşleşecek bir regex'e çevirir. Diğer
-    tüm harfler değişmeden (zorunlu) kalır."""
-    degisenler = {"ı": "ı?", "İ": "İ?", "ş": "ş?", "Ş": "Ş?", "ğ": "ğ?", "Ğ": "Ğ?"}
+    tüm harfler değişmeden (zorunlu) kalır.
+    CHT gibi bazı şablonlar Ş/ş yerine U+0122/U+0121 (Ģ/ģ) üretir;
+    bu bozulma da toleranslı şekilde ele alınır."""
+    degisenler = {
+        "ı": "ı?", "İ": "İ?",
+        "ş": "[şĢģs]?", "Ş": "[ŞĢģs]?",
+        "ğ": "ğ?", "Ğ": "Ğ?",
+    }
     return "".join(degisenler.get(ch, re.escape(ch)) for ch in kelime)
 
 
@@ -319,7 +325,7 @@ NOT_IN_SCOPE_PATTERNS = [
     r"tehlikeli\s+madde\s+(de|dı)[ğg]?ildir",
     r"tehlikeli\s+mal\s+(de|dı)[ğg]?ildir",                       # "Tehlikeli mal değildir"
     r"tehlikeli\s+madde\s+olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r",
-    r"tehlikeli\s+madde\s+olarak\s+düzenlenmemi[şs]t[ıi]r",        # "Tehlikeli madde olarak düzenlenmemiştir"
+    r"tehlikeli\s+madde\s+olarak\s+düzenlenmemi[şsĢģ]t[ıi]r",        # "Tehlikeli madde olarak düzenlenmemiştir" (Ģ: CHT font bozulması)
     r"tehlikeli\s+madde\s+s[ıi]n[ıi]f[ıi]na\s+girmez",             # "...tehlikeli madde sınıfına girmez"
     r"\bdüzenleme\s+yoktur\b",                                     # "Düzenleme yoktur"
     # İngilizce MSDS'lerde görülen açık "kapsam dışı" ifadeleri
