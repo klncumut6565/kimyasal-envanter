@@ -34,6 +34,58 @@ def clean_product_name(name: str) -> str:
     return s
 
 
+_YAYGIN_KELIMELER = re.compile(
+    r"\b(ve|veya|için|ile|bilgi|g[üu]venlik|tarih|madde|ürün|sayfa)\b",
+    re.IGNORECASE)
+
+
+def _metin_bozuk_mu(text: str) -> bool:
+    """Bir sayfadan çıkarılan metnin kullanılamaz olup olmadığını tespit eder.
+
+    Bazı MSDS'ler (örn. Huntsman şablonlarının bir kısmı) metni Type3 font ile
+    gömüyor. Type3 fontlarda karakterler standart bir kodlama yerine özel
+    çizim prosedürleriyle tanımlanır ve genelde 'ToUnicode CMap' (glyph ID -> 
+    gerçek karakter eşleşmesi) içermez. Bu durumda:
+      - pdfplumber "(cid:16)(cid:17)..." gibi anlamsız glyph ID'leri döndürür,
+      - PyMuPDF (fitz) ise metni YANLIŞ bir kodlamayla (örn. WinAnsi)
+        yeniden yorumlar; sonuç harf İÇEREN ama tamamen anlamsız bir metin
+        olur (örn. "GÜVENLİK BİLGİ FORMU" -> "?@ABCD@?E FGHH@I CJKL" gibi
+        bir yer-değiştirme şifresi). Bu yüzden salt harf ORANINA bakmak
+        yetersizdir -- "ABCDEFBAG" gibi bir dizi de harf oranı testini
+        geçer. Onun yerine, metnin GERÇEK, çok sık geçen Türkçe kelimeler
+        (ve, için, ile, bilgi, güvenlik...) içerip içermediğine bakılır;
+        bu kelimelerden hiçbiri yoksa metin muhtemelen bozuk kodlanmıştır."""
+    if not text or not text.strip():
+        return True
+    if "(cid:" in text:
+        return True
+    harfler = [c for c in text if c.isalpha()]
+    if len(harfler) < max(10, len(text) * 0.05):
+        return True
+    # Yeterince uzun bir metinde (>= 80 karakter) hiç yaygın Türkçe kelime
+    # geçmiyorsa, kodlama muhtemelen bozuktur.
+    if len(text.strip()) >= 80 and not _YAYGIN_KELIMELER.search(text):
+        return True
+    return False
+
+
+def _ocr_sayfa(page) -> str:
+    """Tek bir PyMuPDF sayfasını yüksek çözünürlükte görüntüye çevirip
+    Tesseract OCR (Türkçe dil paketi) ile okur. Type3 font gibi normal
+    metin çıkarmanın tamamen başarısız olduğu durumlar için son çare
+    fallback'tir -- yavaştır, bu yüzden sadece gerçekten gerektiğinde
+    (bkz. _metin_bozuk_mu) çağrılır."""
+    try:
+        import pytesseract
+        from PIL import Image
+        import io
+        pix = page.get_pixmap(dpi=150)
+        img = Image.open(io.BytesIO(pix.tobytes("png")))
+        return pytesseract.image_to_string(img, lang="tur")
+    except Exception:
+        return ""
+
+
 def pdf_to_text(pdf_path: str) -> str:
     """PDF'in tüm metnini, tablo sütun hizalamasını koruyarak çıkarır.
 
@@ -45,23 +97,59 @@ def pdf_to_text(pdf_path: str) -> str:
 
     Bazı PDF'ler bozuk/standart olmayan bir yapıya sahip olabilir (örn.
     hatalı xref tablosu) ve pdfplumber bunları açarken hata fırlatabilir.
-    Bu durumda PyMuPDF (fitz) ile yedek bir deneme yapılır; o da
-    başarısız olursa program ÇÖKMEZ, sadece bu PDF için boş metin
-    döner (ilgili ürün otomatik olarak "manuel kontrol gerekli" olur).
-    """
+    Bu durumda PyMuPDF (fitz) ile yedek bir deneme yapılır.
+
+    ÜÇÜNCÜ KADEME (OCR): Bazı MSDS'ler metni Type3 font ile gömüyor (örn.
+    Huntsman/NOVACRON şablonu). Type3 fontlarda genelde ToUnicode CMap
+    olmadığından hem pdfplumber hem PyMuPDF metni ÇÖZEMEZ -- ikisi de
+    dolu ama anlamsız/kullanılamaz metin döndürür (bkz. _metin_bozuk_mu).
+    Bu durumda sayfa görüntüye çevrilip Tesseract OCR ile okunur. OCR
+    yavaş olduğu için SADECE normal yöntemler başarısız olduğunda,
+    sayfa bazında devreye girer. OCR de kurulu değilse (Tesseract/Türkçe
+    dil paketi eksikse) program ÇÖKMEZ, sadece o sayfa için boş metin
+    döner (ilgili ürün otomatik olarak "manuel kontrol gerekli" olur)."""
+    sayfa_metinleri = []
+    fitz_doc = None
     try:
-        parts = []
-        with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages:
-                parts.append(page.extract_text(layout=True) or "")
-        return "\n".join(parts)
+        import fitz
+        fitz_doc = fitz.open(pdf_path)
     except Exception:
+        fitz_doc = None
+
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            for i, page in enumerate(pdf.pages):
+                metin = page.extract_text(layout=True) or ""
+                if _metin_bozuk_mu(metin) and fitz_doc is not None and i < len(fitz_doc):
+                    # Yöntem 2: PyMuPDF ile aynı sayfayı dene
+                    fitz_metin = fitz_doc[i].get_text()
+                    if not _metin_bozuk_mu(fitz_metin):
+                        metin = fitz_metin
+                    else:
+                        # Yöntem 3: OCR (son çare, sadece bu sayfa için)
+                        ocr_metin = _ocr_sayfa(fitz_doc[i])
+                        if ocr_metin.strip():
+                            metin = ocr_metin
+                sayfa_metinleri.append(metin)
+        if fitz_doc is not None:
+            fitz_doc.close()
+        return "\n".join(sayfa_metinleri)
+    except Exception:
+        # pdfplumber PDF'i hiç açamadı (örn. bozuk xref) -- tüm dokümanı
+        # PyMuPDF ile, gerekirse OCR ile dene.
         try:
-            import fitz
+            if fitz_doc is None:
+                import fitz
+                fitz_doc = fitz.open(pdf_path)
             text_parts = []
-            with fitz.open(pdf_path) as doc:
-                for page in doc:
-                    text_parts.append(page.get_text())
+            for page in fitz_doc:
+                metin = page.get_text()
+                if _metin_bozuk_mu(metin):
+                    ocr_metin = _ocr_sayfa(page)
+                    if ocr_metin.strip():
+                        metin = ocr_metin
+                text_parts.append(metin)
+            fitz_doc.close()
             return "\n".join(text_parts)
         except Exception:
             return ""
