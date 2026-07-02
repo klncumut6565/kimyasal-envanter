@@ -372,8 +372,8 @@ NOT_IN_SCOPE_PATTERNS = [
     r"[^.\n]{0,60}?kapsam\w*\s+dı[şs][ıi]ndad[ıi]r",
     r"tehlikeli\s+madde\s+(de|dı)[ğg]?ildir",
     r"tehlikeli\s+mal\s+(de|dı)[ğg]?ildir",                       # "Tehlikeli mal değildir"
-    r"tehlikeli\s+madde\s+olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r",
-    r"tehlikeli\s+madde\s+olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmaz",   # "...sınıflandırılmaz" (geniş zaman, Jakazol formatı)
+    r"tehlikeli\s+(?:madde\s+)?olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r",
+    r"tehlikeli\s+(?:madde\s+)?olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmaz",   # "...sınıflandırılmaz" (geniş zaman, Jakazol formatı)
     r"tehlikeli\s+kimyasal\s+madde\s+olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r",  # "tehlikeli kimyasal madde olarak..."
     # "Taşıma yönetmelik kapsamında tehlikeli olarak sınıflandırılmamıştır"
     r"ta[şs][ıi]ma\s+yönetmelik\s+kapsam[ıi]nda\s+tehlikeli\s+olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r",
