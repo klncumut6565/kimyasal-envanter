@@ -69,16 +69,24 @@ def render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix):
     """'Excel'e Aktar' butonu + sonuç mesajları + indirme butonu. Hem sayfanın
     üstünde hem altında çağrılır ki kullanıcı 500+ ürün varken sayfa sonunu
     aramak zorunda kalmasın."""
+    import zipfile
+    import shutil
+
     st.write(f"**{len(secili_urunler)} ürün** Excel'e eklenmeye hazır.")
 
-    # Çıktı dosya adına firma adını ekle (V1 için) -- birden çok firma ile
-    # çalışırken indirilen dosyalar birbirine karışmasın.
     firma_temiz = re.sub(r'[\\/*?:"<>|]', "", (firma_adi or "")).strip().replace(" ", "_")
     dosya_adi = f"{firma_temiz}_envanter_guncellendi.xlsx" if (firma_temiz and not v2) else "envanter_guncellendi.xlsx"
+    zip_adi = dosya_adi.replace(".xlsx", "_MSDS_ekli.zip")
 
     if st.button("📥 Tüm Seçili Ürünleri Excel'e Aktar", type="primary",
                   disabled=len(secili_urunler) == 0, key=f"export_btn_{key_suffix}"):
+
+        # ── PDF'leri MSDS_PDFler/ alt klasörüne kopyala ─────────────────
+        pdf_klasor = os.path.join(TMP, "MSDS_PDFler")
+        os.makedirs(pdf_klasor, exist_ok=True)
+
         rows = []
+        pdf_relative_paths = []   # Excel'in göreceği göreli yol
         for u in secili_urunler:
             if v2:
                 row = build_inventory_row_v2(u["info"], u["kimyasal_adi"], u["ambalaj"])
@@ -86,19 +94,34 @@ def render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix):
                 row = build_inventory_row(u["info"], TABLO_A_PATH, u["kimyasal_adi"], u["ambalaj"])
             rows.append(row)
 
+            # PDF'i MSDS_PDFler klasörüne kopyala; dosya adı çakışırsa ürün
+            # adından oluşturulan güvenli bir ad kullanılır.
+            src = u.get("pdf_path")
+            if src and os.path.exists(src):
+                guvenli_ad = re.sub(r'[\\/*?:"<>|]', "_", u["kimyasal_adi"]).strip() or "urun"
+                hedef_ad = f"{guvenli_ad}.pdf"
+                hedef = os.path.join(pdf_klasor, hedef_ad)
+                if os.path.abspath(src) != os.path.abspath(hedef):
+                    shutil.copy2(src, hedef)
+                # Excel'de kullanılacak göreli yol (xlsx ile aynı klasörde ZIP açılır)
+                pdf_relative_paths.append(f"MSDS_PDFler/{hedef_ad}")
+            else:
+                pdf_relative_paths.append(None)
+
         out_path = os.path.join(TMP, dosya_adi)
         st.session_state.sonuc_mesajlari = []
+
         if v2:
             try:
-                sonuc = fill_or_append_v2(envanter_path, out_path, rows)
+                sonuc = fill_or_append_v2(envanter_path, out_path, rows,
+                                           pdf_relative_paths=pdf_relative_paths)
             except ValueError as e:
                 sonuc = None
                 st.session_state.sonuc_mesajlari.append(("error", f"❌ {e}"))
             if sonuc is not None:
-                dolan = [ad for _, d, ad in sonuc if d == "dolduruldu"]
+                dolan     = [ad for _, d, ad in sonuc if d == "dolduruldu"]
                 zaten_dolu = [ad for _, d, ad in sonuc if d == "zaten_dolu"]
                 eslesmeyen = [ad for _, d, ad in sonuc if d == "eslesme_yok"]
-                st.session_state.sonuc_dosyasi = out_path
                 if dolan:
                     st.session_state.sonuc_mesajlari.append(
                         ("success", f"✅ {len(dolan)} ürünün boş hücreleri dolduruldu: {', '.join(dolan)}"))
@@ -111,10 +134,23 @@ def render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix):
                         ("warning", f"⚠️ {len(eslesmeyen)} ürün envanterde bulunamadığı için ATLANDI "
                                     f"(Versiyon 2 yeni satır eklemez): {', '.join(eslesmeyen)}"))
         else:
-            added = add_products(envanter_path, out_path, rows)
-            st.session_state.sonuc_dosyasi = out_path
+            added = add_products(envanter_path, out_path, rows,
+                                  pdf_relative_paths=pdf_relative_paths)
             st.session_state.sonuc_mesajlari.append(
                 ("success", f"{len(added)} yeni satır eklendi (Excel satırları: {added})."))
+
+        # ── ZIP oluştur: xlsx + MSDS_PDFler/ ────────────────────────────
+        zip_path = os.path.join(TMP, zip_adi)
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            if os.path.exists(out_path):
+                zf.write(out_path, dosya_adi)
+            for pdf_rel in pdf_relative_paths:
+                if pdf_rel:
+                    abs_pdf = os.path.join(TMP, pdf_rel)
+                    if os.path.exists(abs_pdf):
+                        zf.write(abs_pdf, pdf_rel)
+
+        st.session_state.sonuc_dosyasi = zip_path
 
     for tip, mesaj in st.session_state.sonuc_mesajlari:
         getattr(st, tip)(mesaj)
@@ -122,12 +158,17 @@ def render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix):
     if st.session_state.sonuc_dosyasi and os.path.exists(st.session_state.sonuc_dosyasi):
         with open(st.session_state.sonuc_dosyasi, "rb") as f:
             st.download_button(
-                "⬇️ Güncellenmiş Envanter Excel Dosyasını İndir",
+                "⬇️ Güncellenmiş Envanter + MSDS PDF'leri (ZIP) İndir",
                 data=f.read(),
-                file_name=dosya_adi,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                file_name=zip_adi,
+                mime="application/zip",
                 key=f"download_btn_{key_suffix}",
             )
+        st.caption(
+            "📌 ZIP'i açtığınızda **Excel dosyasını ve `MSDS_PDFler/` klasörünü "
+            "AYNI konuma çıkarın.** Kimyasal adına Excel'de tıkladığınızda "
+            "PDF otomatik açılır."
+        )
 
 
 st.title("🧪 Kimyasal Envanter Oluşturucu")

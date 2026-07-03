@@ -196,6 +196,29 @@ def ensure_note_header(ws):
     return note_col
 
 
+def _add_pdf_hyperlink(ws, row, col, relative_path):
+    """Verilen hücreye MSDS PDF'sine giden GÖRECELİ bir Excel köprüsü ekler.
+
+    Göreli yol (örn. "MSDS_PDFler/urun.pdf"), köprünün Excel dosyasıyla
+    AYNI üst klasördeki bir alt klasöre işaret ettiği anlamına gelir --
+    bu yalnızca xlsx ve PDF'ler birlikte (aynı ZIP içinde) indirilip aynı
+    göreli klasör yapısında tutulduğu sürece çalışır. Mutlak sunucu yolu
+    (örn. /tmp/...) KULLANILMAZ çünkü Streamlit Cloud'da bu yol kullanıcının
+    kendi bilgisayarında anlamsızdır.
+    Hücrenin metnini DEĞİŞTİRMEZ (ürün adı olduğu gibi kalır), sadece
+    köprü ekler ve standart Excel köprü görünümünü (mavi, altı çizili)
+    uygular.
+    """
+    cell = ws.cell(row=row, column=col)
+    if not cell.value:
+        return
+    cell.hyperlink = relative_path
+    f = copy.copy(cell.font)
+    f.color = "FF0000FF"
+    f.underline = "single"
+    cell.font = f
+
+
 def _shift_rows_down(ws, start_row, end_row, n, max_col):
     """[start_row, end_row] satır aralığını n satır aşağı kaydırır.
 
@@ -343,12 +366,18 @@ def _satirda_gercek_un_no_var_mi(ws, row, un_col):
     return bool(re.match(r"^\s*(UN\s*)?\d{3,4}\s*$", str(val), re.IGNORECASE))
 
 
-def fill_or_append_v2(envanter_path: str, output_path: str, urunler: list):
+def fill_or_append_v2(envanter_path: str, output_path: str, urunler: list,
+                       pdf_relative_paths: list = None):
     """Versiyon 2 (ORDU tarzı basit format) için: ürün adı zaten bir
     satırda varsa ve ADR hücreleri BOŞSA onları doldurur (dolu hücrelere
     dokunmaz). Ürün adı envanterde bulunamazsa o ürün ATLANIR -- yeni
     satır eklenmez (Versiyon 2'nin amacı sadece var olan boş hücreleri
     tamamlamaktır, yeni ürün eklemek değildir).
+
+    pdf_relative_paths: urunler ile AYNI SIRADA, her ürünün kaynak MSDS
+             PDF'ine göreli bir yol listesi (örn. "MSDS_PDFler/urun.pdf").
+             Verilirse, eşleşen satırdaki "Kimyasal Adı" hücresine bu
+             PDF'e giden bir Excel köprüsü eklenir.
 
     Dönüş: [(satır_no veya None, "dolduruldu"|"zaten_dolu"|"eslesme_yok", kimyasal_adi), ...]
     """
@@ -373,13 +402,16 @@ def fill_or_append_v2(envanter_path: str, output_path: str, urunler: list):
         last_row -= 1
 
     sonuc = []
-    for urun in urunler:
+    for i, urun in enumerate(urunler):
         ad = urun.get("Kimyasal Adı")
         existing_row = _find_existing_row_by_name(ws, ad, name_col, HEADER_ROW, last_row)
 
         if not existing_row:
             sonuc.append((None, "eslesme_yok", ad))
             continue
+
+        if pdf_relative_paths and i < len(pdf_relative_paths) and pdf_relative_paths[i]:
+            _add_pdf_hyperlink(ws, existing_row, name_col, pdf_relative_paths[i])
 
         herhangi_dolduruldu = False
         un_col = col_map.get(_norm("UN NUMARASI"))
@@ -419,11 +451,17 @@ def fill_or_append_v2(envanter_path: str, output_path: str, urunler: list):
     return sonuc
 
 
-def add_products(envanter_path: str, output_path: str, urunler: list):
+def add_products(envanter_path: str, output_path: str, urunler: list,
+                  pdf_relative_paths: list = None):
     """
     urunler: matcher.build_inventory_row() çıktısı sözlüklerin listesi.
              Her sözlükte opsiyonel "logo_path" anahtarı olabilir
              (yerel diskteki resim dosyası yolu).
+    pdf_relative_paths: urunler ile AYNI SIRADA, her ürünün kaynak MSDS
+             PDF'ine göreli bir yol listesi (örn. "MSDS_PDFler/urun.pdf").
+             Verilirse, "Kimyasal Adı" hücresine bu PDF'e giden bir Excel
+             köprüsü eklenir (tıklanınca PDF açılır). None/eksik ise o
+             ürün için köprü eklenmez.
     Dönen değer: eklenen satırların Excel satır numaraları listesi.
     """
     wb = load_workbook(envanter_path)
@@ -444,6 +482,7 @@ def add_products(envanter_path: str, output_path: str, urunler: list):
     col_map = build_column_map(ws)  # ensure_note_header sonrası tekrar oku
     max_col = max(ws.max_column, note_col)
     no_col = col_map.get(_norm("No"), 1)
+    name_col = col_map.get(_norm("Kimyasal Adı"))
 
     n = len(urunler)
     insert_at = last_data_row + 1
@@ -461,6 +500,9 @@ def add_products(envanter_path: str, output_path: str, urunler: list):
             idx = col_map.get(_norm(col_name))
             if idx and idx != no_col:
                 ws.cell(row=target_row, column=idx, value=value)
+
+        if name_col and pdf_relative_paths and i < len(pdf_relative_paths) and pdf_relative_paths[i]:
+            _add_pdf_hyperlink(ws, target_row, name_col, pdf_relative_paths[i])
 
         _auto_fit_row_height(ws, target_row, max_col, ws.row_dimensions[target_row].height)
 
