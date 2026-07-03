@@ -177,6 +177,8 @@ def extract_revize_tarihi(text: str):
         r"\bRevision\s+Date\s*:?\s*" + tarih_degeri,  # "Revision Date: 12.12.2020" sütun formatı
         # BASF formatı: "Tarih / gözden geçirilme tarihi: 31.01.2018"
         r"[Tt]arih\s*/\s*gözden\s+geçirilme\s+tarihi\s*:\s*" + tarih_degeri,
+        # Setaş/Setas formatı: "Güncelleme tarihi: 23.03.2023"
+        r"G[üu]ncelleme\s+[Tt]arihi\s*:?\s*" + tarih_degeri,
     ]
     for p in patterns:
         m = re.search(p, text, re.IGNORECASE)
@@ -460,7 +462,7 @@ NOT_IN_SCOPE_PATTERNS = [
     r"[^.\n]{0,60}?kapsam\w*\s+dı[şs][ıi]ndad[ıi]r",
     r"te[hk]likeli\s+madde\s+(de|dı)[ğg]?ildir",
     r"te[hk]likeli\s+mal\s+(de|dı)[ğg]?ildir",                       # "Tehlikeli mal değildir"
-    r"te[hk]likeli\s+(?:madde\s+)?olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r",
+    r"te[hk]likeli\s+(?:madde|ürün|mal)?\s*olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lma(?:m[ıi][şs]t[ıi]r|maktad[ıi]r)",
     r"te[hk]likeli\s+(?:madde\s+)?olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmaz",   # "...sınıflandırılmaz" (geniş zaman, Jakazol formatı)
     r"te[hk]likeli\s+kimyasal\s+madde\s+olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r",  # "tehlikeli kimyasal madde olarak..."
     # "Taşıma yönetmelik kapsamında tehlikeli olarak sınıflandırılmamıştır"
