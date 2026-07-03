@@ -179,6 +179,10 @@ def extract_revize_tarihi(text: str):
         r"[Tt]arih\s*/\s*gözden\s+geçirilme\s+tarihi\s*:\s*" + tarih_degeri,
         # Setaş/Setas formatı: "Güncelleme tarihi: 23.03.2023"
         r"G[üu]ncelleme\s+[Tt]arihi\s*:?\s*" + tarih_degeri,
+        # BİRPA/Birlik Kimya formatı: "Düzenleme Tarihi 18.07.2016" (kolon
+        # yok, "Yeni" öneki de yok -- ayrı bir desen gerekiyor çünkü
+        # "Yeni\s+düzen\w*\s+tarihi" bunu yakalamıyor).
+        r"\bD[üu]zenleme\s+[Tt]arihi\s*:?\s*" + tarih_degeri,
     ]
     for p in patterns:
         m = re.search(p, text, re.IGNORECASE)
