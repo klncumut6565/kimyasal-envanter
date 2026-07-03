@@ -627,6 +627,18 @@ def parse_numbered_subsections(sec14_text: str):
                         sec14_text, re.IGNORECASE)
                     if m:
                         un_no = m.group(1)
+                    else:
+                        # "UN Numarası\n:\nUN 1072" formatı — etiket, ":" ve
+                        # değer 3 AYRI satırda (14.1. ADR: alt başlığı,
+                        # pdfplumber'ın sütunları alt alta dizdiği tablo).
+                        # Diğer varyantlardan farkı: etiketle değer arasında
+                        # tek başına bir ":" satırı var, bu yüzden \s*\n\s*
+                        # yeterli olmuyor -- ":?" ile bunu ayrıca tolere ediyoruz.
+                        m = re.search(
+                            r"[ÜU]N\s*Numaras[ıi]\s*\n\s*:?\s*\n?\s*(?:[ÜU]N\s*)?(\d{3,4})\b",
+                            sec14_text, re.IGNORECASE)
+                        if m:
+                            un_no = m.group(1)
     if not un_no:
         return None
 
@@ -699,6 +711,17 @@ def parse_numbered_subsections(sec14_text: str):
             # taşmış. Değer ilk satırın sonunda bulunur.
             m = re.search(
                 r"Ta[şsĢģ][ıi]mac[ıi]l[ıi][kğĞ]\s+zararlılık\s+(\d+(?:\.\d+)?)\s*\n\s*s[ıi]n[ıi]f",
+                sec14_text, re.IGNORECASE)
+            if m and _gecerli_sinif(m.group(1), un_no):
+                sinif = m.group(1)
+        if sinif is None:
+            # "Sınıfı\n:\n2" formatı — etiket, ":" ve değer 3 AYRI satırda
+            # (14.1. ADR: alt başlığı, "UN Numarası" ile aynı tablo
+            # yapısı). Sadece diğer tüm yöntemler başarısız olduğunda
+            # devreye giriyor; _gecerli_sinif() ile 1-9 aralığı dışındaki
+            # (örn. başka bir alanın değeri) yanlış eşleşmeler eleniyor.
+            m = re.search(
+                r"\bS[ıi]n[ıi]f[ıi]\s*\n\s*:?\s*\n?\s*(\d+(?:\.\d+)?)\b",
                 sec14_text, re.IGNORECASE)
             if m and _gecerli_sinif(m.group(1), un_no):
                 sinif = m.group(1)
