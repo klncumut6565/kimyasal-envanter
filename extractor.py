@@ -527,11 +527,18 @@ def explicit_not_in_scope(section14_text: str) -> bool:
     # bir "kapsam dışı" göstergesidir (dil bağımsız: NUMARASI/NO./number).
     # "14.1" öneki opsiyonel (bazı şablonlarda alt başlık numarası yok);
     # etiket ile değer arasında nokta/satır sonu da olabilir ("numarası.\nUygulanmaz.").
+    # DOTALL + .{0,200}? (eski [.\s:]* yerine): bazı şablonlarda etiketle
+    # değer arasında "veya ID numarası" gibi ek metin VE bir satır sonu
+    # oluyor ("14.1. UN numarası veya ID numarası\nUygulanmaz" — Setaş
+    # çok modlu tablo formatı); ayrıca layout=True çıktısında sütun
+    # hizalaması için etiketle değer arasına onlarca boşluk eklenebiliyor
+    # (5 sütunlu ADR/IMDG/IATA/ADN/RID tablosunda 80+ karakter ölçüldü) --
+    # eski desen satır atlayamıyordu VE bu kadar uzun boşluğu kapsamıyordu.
     m = re.search(
         r"(?:14\s*\.?\s*1\b\.?\s*)?UN[\s-]*(?:NUMARAS[ıi]|NO\.?|\([^)]*\)\s*number)"
-        r"[.\s:]*"
-        r"(N\s*/\s*A|YOK|UYGULAN[AM]*Z|NONE|-)\b",
-        section14_text, re.IGNORECASE)
+        r".{0,200}?"
+        r"\b(N\s*/\s*A|YOK|UYGULAN[AM]*Z|NONE|-)\b",
+        section14_text, re.IGNORECASE | re.DOTALL)
     if m:
         return True
     return False
@@ -641,6 +648,23 @@ def parse_numbered_subsections(sec14_text: str):
                             sec14_text, re.IGNORECASE)
                         if m:
                             un_no = m.group(1)
+                        else:
+                            # "UN Numarası\n...\nUN No. (ADR/RID/ADN)
+                            # UN1384" formatı — etiket satırından sonra bir
+                            # ARA ETİKET daha var, ve sayı "UN" harflerine
+                            # BİTİŞİK yazılmış (boşluksuz: "UN1384").
+                            # \b\d{3,4}\b harf-rakam arasında \b bulamadığı
+                            # için genel "UN NO." deseni bunu YAKALAYAMIYOR
+                            # (harf ve rakam ikisi de \w sayıldığından
+                            # aralarında word-boundary yok) -- bu ciddi bir
+                            # güvenlik riski: gerçekten ADR kapsamındaki bir
+                            # madde (örn. UN1384, Sınıf 4.2) sessizce
+                            # atlanabilir.
+                            m = re.search(
+                                r"[ÜU]N\s*No\.?\s*\([^)]*\)\s*[ÜU]N\s*-?\s*(\d{3,4})\b",
+                                sec14_text, re.IGNORECASE)
+                            if m:
+                                un_no = m.group(1)
     if not un_no:
         return None
 
@@ -686,9 +710,11 @@ def parse_numbered_subsections(sec14_text: str):
         if m_akkim and _gecerli_sinif(m_akkim.group(1), un_no):
             sinif = m_akkim.group(1)
         # "ADR SINIFI NOSU. 8" gibi numaralı alt başlık olmadan düz etiket.
+        # [\w/] → "ADR/RID/ADN Sınıfı" gibi eğik çizgili mod listelerini de
+        # kapsar (\w tek başına "/" karakterini atlıyordu, bu format kaçıyordu).
         if sinif is None:
             m = re.search(
-                r"\bADR\w*\s*S[ıi]N[ıi]F\w*.{0,30}?\b(\d+(?:\.\d+)?)\b",
+                r"\bADR[\w/]*\s*S[ıi]N[ıi]F\w*.{0,30}?\b(\d+(?:\.\d+)?)\b",
                 sec14_text, re.IGNORECASE | re.DOTALL)
             if m and _gecerli_sinif(m.group(1), un_no):
                 sinif = m.group(1)
