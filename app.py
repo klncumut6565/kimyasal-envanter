@@ -8,6 +8,7 @@ import streamlit as st
 from openpyxl import load_workbook
 
 from extractor import extract_adr_info, clean_product_name
+from ai_destek import ENGINE_LABELS, FAILOVER_ORDER, build_failover_chain
 from matcher import (build_inventory_row, build_inventory_row_v2,
                        NOT_IN_SCOPE_TEXT, MANUAL_REVIEW_TEXT)
 from excel_writer import (add_products, fill_or_append_v2, create_new_envanter,
@@ -256,6 +257,40 @@ with st.sidebar:
             else:
                 st.info("Devam etmek için envanter Excel dosyasını yükleyin.")
 
+    # ── AI Destekli Tamamlama (opsiyonel) ────────────────────────────────
+    # Hiçbir anahtar girilmezse davranış TAMAMEN eskisiyle aynıdır (sadece
+    # regex/kural tabanlı çıkarım). Bir anahtar girilirse, SADECE regex'in
+    # boş bıraktığı hücrelerde (Tedarikçi, Fonksiyon, Cas No, H Kodları,
+    # Tehlikeli/Tehlikesiz, Tehlike Etiketi, MSDS/SDS Tarihi) devreye girer.
+    st.header("2) AI Destekli Tamamlama (opsiyonel)")
+    with st.expander("Regex boş bıraktığı hücreleri AI ile doldur", expanded=False):
+        st.caption(
+            "Anahtar girmezsen hiçbir şey değişmez, program aynen şimdiki gibi çalışır. "
+            "Anahtar girersen, AI SADECE regex'in bulamadığı hücrelerde devreye girer "
+            "(doldurulmuş hücrelere asla dokunmaz). Sırayla denenir: "
+            + " → ".join(ENGINE_LABELS[e] for e in FAILOVER_ORDER)
+        )
+        ai_keys = {
+            "groq": st.text_input("Groq API Anahtarı", type="password", key="ai_key_groq"),
+            "gemini": st.text_input("Gemini API Anahtarı", type="password", key="ai_key_gemini"),
+            "openrouter": st.text_input("OpenRouter API Anahtarı", type="password", key="ai_key_openrouter"),
+            "openai": st.text_input("OpenAI API Anahtarı", type="password", key="ai_key_openai"),
+            "claude": st.text_input("Claude API Anahtarı", type="password", key="ai_key_claude"),
+        }
+        ai_ollama_url = st.text_input(
+            "Ollama Adresi (yerelde çalışıyorsa, opsiyonel)",
+            placeholder="http://localhost:11434", key="ai_ollama_url")
+        ai_models = {
+            "groq": "llama-3.3-70b-versatile", "gemini": "gemini-2.5-flash-lite",
+            "openrouter": "openrouter/free", "openai": "gpt-4o-mini",
+            "claude": "claude-haiku-4-5-20251001", "ollama": "llama3.1",
+        }
+        ai_chain = build_failover_chain(FAILOVER_ORDER[0], ai_keys, ai_ollama_url)
+        if ai_chain:
+            st.success(f"AI tamamlama aktif — sıra: {' → '.join(ENGINE_LABELS[e] for e in ai_chain)}")
+        else:
+            st.caption("Şu an hiçbir anahtar girilmedi — sadece regex çalışacak.")
+
     # ── QR Kod (sidebar en alt) ──────────────────────────────────────────
     st.divider()
     if os.path.exists(QR_KOD_PATH):
@@ -263,7 +298,7 @@ with st.sidebar:
     else:
         st.caption("⚠️ QR kod bulunamadı: data/qr_kod.png")
 
-st.header("2) MSDS PDF'lerini Yükle")
+st.header("3) MSDS PDF'lerini Yükle")
 
 if "pdf_uploader_key" not in st.session_state:
     st.session_state.pdf_uploader_key = 0
@@ -309,7 +344,8 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
                 ilerleme_metni.write(f"📄 İşleniyor: **{pdf.name}** ({i}/{toplam}){kalan_metin}")
                 pdf_path = save_upload(pdf, subdir="pdf")
                 try:
-                    info = extract_adr_info(pdf_path)
+                    info = extract_adr_info(pdf_path, ai_chain=ai_chain, ai_models=ai_models,
+                                             ai_keys=ai_keys, ai_ollama_url=ai_ollama_url)
                 except Exception as e:
                     # Bozuk/okunamayan bir PDF tüm toplu işlemi durdurmasın --
                     # bu ürün "manuel kontrol gerekli" olarak işaretlenir,
@@ -346,7 +382,7 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
     render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix="top")
     st.divider()
 
-    st.header("3) Çıkarılan Bilgileri Gözden Geçirin")
+    st.header("4) Çıkarılan Bilgileri Gözden Geçirin")
 
     for fname, urun in st.session_state.urunler.items():
         info = urun["info"]

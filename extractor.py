@@ -400,21 +400,41 @@ def extract_tehlikeli_tehlikesiz(text: str, h_kodlari):
     return None
 
 
-def extract_full_info(pdf_path: str, text: str = None):
+def extract_full_info(pdf_path: str, text: str = None, ai_chain: list = None,
+                       ai_models: dict = None, ai_keys: dict = None, ai_ollama_url: str = ""):
     """Bölüm 14 dışında, envanterin diğer sütunları için de Bölüm 1/2/3'ten
     bilgi çıkarır. extract_adr_info ile aynı metni tekrar okumamak için
-    text önceden çıkarılmışsa parametre olarak verilebilir."""
+    text önceden çıkarılmışsa parametre olarak verilebilir.
+
+    ai_chain verilmezse (None/boş liste) davranış TAMAMEN eskisiyle aynıdır —
+    sadece regex çalışır. ai_chain doluysa (kullanıcı en az bir API anahtarı
+    girdiyse), regex'in BOŞ bıraktığı alanlar için AI tamamlayıcı katman
+    devreye girer; regex'in doldurduğu hiçbir alana dokunulmaz."""
     if text is None:
         text = pdf_to_text(pdf_path)
     h_kodlari = extract_h_kodlari(text)
-    return {
+    sonuc = {
         "tedarikci": extract_tedarikci(text),
         "fonksiyon": extract_fonksiyon(text),
         "cas_no": extract_cas_no(text),
         "h_kodlari": h_kodlari,
         "tehlikeli_tehlikesiz": extract_tehlikeli_tehlikesiz(text, h_kodlari),
         "tehlike_etiketi": extract_uyari_kelimesi(text),
+        "revize_tarihi": extract_revize_tarihi(text),
     }
+
+    if ai_chain:
+        try:
+            from ai_destek import tamamla_eksik_alanlar
+            guncelleme = tamamla_eksik_alanlar(
+                text, sonuc, chain=ai_chain, models=ai_models or {},
+                keys=ai_keys or {}, ollama_url=ai_ollama_url,
+            )
+            sonuc.update(guncelleme)  # sadece AI'nın doldurabildiği (regex'in boş bıraktığı) alanlar
+        except Exception:
+            pass  # AI katmanı hiçbir koşulda regex sonucunu düşürmemeli
+
+    return sonuc
 
 
 def find_section14_text(text: str):
@@ -905,10 +925,16 @@ def parse_numbered_subsections(sec14_text: str):
     return {"un_no": un_no, "sinif": sinif, "paketleme_grubu": pg}
 
 
-def extract_adr_info(pdf_path: str):
+def extract_adr_info(pdf_path: str, ai_chain: list = None, ai_models: dict = None,
+                      ai_keys: dict = None, ai_ollama_url: str = ""):
     """Tek bir PDF'ten ADR (Bölüm 14) bilgisini VE Versiyon 2'nin diğer
     sütunları (tedarikçi, fonksiyon, cas no, H kodları vb.) için Bölüm
-    1/2/3'ten ek bilgiyi tek seferde çıkarır."""
+    1/2/3'ten ek bilgiyi tek seferde çıkarır.
+
+    ai_chain verilmezse davranış tamamen eskisiyle aynıdır (sadece regex).
+    ai_chain doluysa, regex'in boş bıraktığı alanlar (tedarikçi, fonksiyon,
+    cas no, H kodları, tehlikeli/tehlikesiz, tehlike etiketi, revize tarihi)
+    için AI tamamlayıcı katman devreye girer — bkz. extract_full_info."""
     text = pdf_to_text(pdf_path)
     result = {
         "revize_tarihi": extract_revize_tarihi(text),
@@ -919,7 +945,9 @@ def extract_adr_info(pdf_path: str):
         "adr_kapsaminda": None,  # True / False / None (belirsiz->manuel kontrol)
         "ham_metin_bulundu": False,
     }
-    result.update(extract_full_info(pdf_path, text=text))
+    result.update(extract_full_info(pdf_path, text=text, ai_chain=ai_chain,
+                                     ai_models=ai_models, ai_keys=ai_keys,
+                                     ai_ollama_url=ai_ollama_url))
 
     sec14 = find_section14_text(text)
     if sec14 is None:
