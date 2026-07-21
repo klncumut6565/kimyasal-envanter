@@ -37,7 +37,14 @@ try:
 except ImportError:
     GEMINI_SDK_OK = False
 
-from ai_cache_lib.python.ai_cache import cached_call
+# ai_cache_lib DEVRE DIŞI — msds-ozetleyici'de olduğu gibi burada da import
+# başarısız olduğunda uygulamanın crash olmaması için try/except ile sarılı.
+# Yeniden aktifleştirmek için: try'ı kaldır (düz import'a dön) ve aşağıdaki
+# `_gercek_cagri` çağrısındaki bypass'ı kaldır.
+try:
+    from ai_cache_lib.python.ai_cache import cached_call  # noqa: F401
+except Exception:
+    cached_call = None
 
 
 # ── Eksik alan açıklamaları (AI'ya SADECE bunlar sorulur) ─────────────────
@@ -65,12 +72,16 @@ ENGINE_LABELS = {
 FAILOVER_ORDER = ["groq", "gemini", "openrouter", "openai", "claude", "ollama"]
 
 MODEL_FALLBACKS = {
-    "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
-    "gemini": ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
+    # Groq: llama-3.3-70b ve llama-3.1-8b 17 Haziran 2026'da kullanımdan
+    # kaldırıldı; Groq'un resmi önerdiği halefler:
+    "groq": ["openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+    # Gemini: 2.5 Flash-Lite yeni kullanıcılara kapatıldı → 3.1 Flash-Lite halefi
+    "gemini": ["gemini-3.1-flash-lite", "gemini-3.5-flash"],
     "openrouter": ["openrouter/free", "deepseek/deepseek-r1:free",
                    "meta-llama/llama-3.3-70b-instruct:free"],
     "openai": ["gpt-4o-mini", "gpt-4o"],
-    "claude": ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"],
+    # Anthropic: Sonnet 4.6 → Sonnet 5 (güncel nesil). Haiku 4.5 en ekonomik.
+    "claude": ["claude-haiku-4-5-20251001", "claude-sonnet-5"],
     "ollama": [],
 }
 
@@ -402,13 +413,15 @@ def tamamla_eksik_alanlar(text: str, mevcut: dict, chain: list, models: dict, ke
                 continue
         raise last_err or RuntimeError("Hiçbir AI motoru yanıt veremedi.")
 
+    # ai_cache_lib DEVRE DIŞI — cached_call sarmalayıcısı hatalar ürettiği için
+    # kaldırıldı; her istek doğrudan AI motoruna gidiyor (cache tasarrufu yok
+    # ama akış stabil). Yeniden aktifleştirmek için:
+    #   (sonuc, kullanilan_motor), cache_hit = cached_call(
+    #       key_source=prompt, fn=_gercek_cagri, fn_args=(),
+    #       namespace="kimyasal_envanter_tamamlama",
+    #   )
     try:
-        (sonuc, kullanilan_motor), cache_hit = cached_call(
-            key_source=prompt,
-            fn=_gercek_cagri,
-            fn_args=(),
-            namespace="kimyasal_envanter_tamamlama",
-        )
+        sonuc, kullanilan_motor = _gercek_cagri()
     except Exception:
         # Hiçbir motor çalışmadıysa (kota bitmiş, anahtar geçersiz vb.) sessizce
         # vazgeç — regex'in bulduğu alanlar kullanıcıya yine sunulur, program çökmez.
