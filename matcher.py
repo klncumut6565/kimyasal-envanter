@@ -342,6 +342,106 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
 NOT_IN_SCOPE_TEXT_V2 = "MSDS/SDS Raporu bölüm 14 kapsamında ADR kapsamında değildir."
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# VERSİYON 3 — SENTEZ TMGD+İSG
+# ═══════════════════════════════════════════════════════════════════════
+# 22 sütunlu birleşik format. TMGD (ADR) ve İSG (H kodları, tehlike sınıfı,
+# GRS/GOTS uyumluluğu, kimyasal envanter) gereksinimlerini tek satırda
+# birleştirir. Sütunların 12'si PDF'ten otomatik doldurulur, 10'u manuel
+# giriş için BOŞ bırakılır (LOT, GATEWAY, Use Cat/Type, DEĞERLENDİRME,
+# GRS, GOTS, DEPO) — kullanıcı Excel'de elle doldurur.
+
+V3_SUTUNLAR = [
+    "Kimyasal Üretici Firma Adı",       # otomatik: extract_uretici
+    "Kimyasal Tedarikçi Firma Adı",     # otomatik: extract_tedarikci
+    "KODU",                              # otomatik: extract_urun_kodu
+    "KİMYASAL ADI",                      # otomatik: extract_suggested_name
+    "GELEN LOT BİLGİSİ",                 # MANUEL (boş)
+    "STOK LOT BİLGİSİ",                  # MANUEL (boş)
+    "KİMYASALIN TÜRÜ",                   # otomatik: extract_kimyasalin_turu
+    "GATEWAY'DE SEVİYE KAYDI",           # MANUEL (boş — LEVEL 1/2/3)
+    "Use Category",                      # MANUEL (boş — ZDHC taksonomisi)
+    "Use Type",                          # MANUEL (boş — ZDHC alt kategorisi)
+    "CAS NO",                            # otomatik: extract_cas_listesi (multi-CAS, alt satırla ayrılır)
+    "MSDS/TDS RAPOR ÜÇ YILI AŞMAYACAK",  # otomatik: extract_revize_tarihi
+    "MSDS/TDS DİLİ",                     # otomatik: extract_msds_dili
+    "H KODLARI",                         # otomatik: extract_h_kodlari (alt satırla ayrılır)
+    "TEHLİKE SINIFI",                    # otomatik: extract_tehlikeli_tehlikesiz
+    "TEHLİKE ETİKETİ",                   # otomatik: extract_uyari_kelimesi
+    "DEĞERLENDİRME GÜNCEL",              # MANUEL (boş — evet/hayır)
+    "GATEWAY DEĞERLENDİRME SONUCU",      # MANUEL (boş — ZDHC MRSL v3.1)
+    "GRS STANDARDI",                     # MANUEL (boş — LEVEL 1/2/3)
+    "GOTS VERSION 7.0",                  # MANUEL (boş — uygun/uygun değil)
+    "FONKSIONU",                         # otomatik: extract_fonksiyon
+    "DEPOLANDIĞI YER",                   # MANUEL (boş)
+]
+
+V3_OTOMATIK_SUTUNLAR = {
+    "Kimyasal Üretici Firma Adı", "Kimyasal Tedarikçi Firma Adı", "KODU",
+    "KİMYASAL ADI", "KİMYASALIN TÜRÜ", "CAS NO",
+    "MSDS/TDS RAPOR ÜÇ YILI AŞMAYACAK", "MSDS/TDS DİLİ", "H KODLARI",
+    "TEHLİKE SINIFI", "TEHLİKE ETİKETİ", "FONKSIONU",
+}
+
+
+def _cas_listesi_hucre_formati(cas_listesi):
+    """V3 için Multi-CAS hücre değeri. Excel'de wrap-text ile alt satır
+    olarak görünmesi için '\\n' ile birleştirir. Boşsa None döner
+    (fallback için)."""
+    if not cas_listesi:
+        return None
+    return "\n".join(cas_listesi)
+
+
+def _h_kodlari_hucre_formati(h_kodlari):
+    """V3 için H kodlarını alt satırla ayrılmış olarak biçimlendirir
+    (mevcut format 'H314, H318' — V3 örneğinde 'H314\\nH318')."""
+    if not h_kodlari:
+        return None
+    if isinstance(h_kodlari, list):
+        parcalar = h_kodlari
+    else:
+        parcalar = [p.strip() for p in str(h_kodlari).split(",") if p.strip()]
+    return "\n".join(parcalar) if parcalar else None
+
+
+def build_inventory_row_v3(adr_info: dict, kimyasal_adi: str):
+    """Sentez TMGD+İSG (Versiyon 3) satır sözlüğü üretir. 22 sütun; 12'si
+    PDF'ten otomatik, 10'u manuel giriş için BOŞ bırakılır.
+
+    ADR bilgileri (UN No, Sınıf, PG) bu şemada TEHLİKE SINIFI'na özet olarak
+    yansır (Tehlikeli/Tehlikesiz). Tam ADR detayı gerekiyorsa Versiyon 1
+    kullanılmalıdır — V3 İSG odaklı bir birleşik formattır."""
+    # Multi-CAS öncelikli; yoksa tek CAS'e düş
+    cas_deger = _cas_listesi_hucre_formati(adr_info.get("cas_listesi")) or adr_info.get("cas_no")
+    row = {
+        "Kimyasal Üretici Firma Adı":       adr_info.get("uretici") or adr_info.get("tedarikci"),
+        "Kimyasal Tedarikçi Firma Adı":     adr_info.get("tedarikci"),
+        "KODU":                              adr_info.get("urun_kodu"),
+        "KİMYASAL ADI":                      kimyasal_adi,
+        "GELEN LOT BİLGİSİ":                 None,  # manuel
+        "STOK LOT BİLGİSİ":                  None,  # manuel
+        "KİMYASALIN TÜRÜ":                   adr_info.get("kimyasalin_turu"),
+        "GATEWAY'DE SEVİYE KAYDI":           None,  # manuel
+        "Use Category":                      None,  # manuel
+        "Use Type":                          None,  # manuel
+        "CAS NO":                            cas_deger,
+        "MSDS/TDS RAPOR ÜÇ YILI AŞMAYACAK":  adr_info.get("revize_tarihi"),
+        "MSDS/TDS DİLİ":                     adr_info.get("msds_dili"),
+        "H KODLARI":                         _h_kodlari_hucre_formati(adr_info.get("h_kodlari")),
+        "TEHLİKE SINIFI":                    adr_info.get("tehlikeli_tehlikesiz"),
+        "TEHLİKE ETİKETİ":                   adr_info.get("tehlike_etiketi"),
+        "DEĞERLENDİRME GÜNCEL":              None,  # manuel
+        "GATEWAY DEĞERLENDİRME SONUCU":      None,  # manuel
+        "GRS STANDARDI":                     None,  # manuel
+        "GOTS VERSION 7.0":                  None,  # manuel
+        "FONKSIONU":                         adr_info.get("fonksiyon"),
+        "DEPOLANDIĞI YER":                   None,  # manuel
+        "durum":                             "ok",
+    }
+    return row
+
+
 def build_inventory_row_v2(adr_info: dict, kimyasal_adi: str, ambalaj_tank_dokme: str = None):
     """ORDU tarzı (Versiyon 2) basit envanter formatı için satır sözlüğü
     üretir. V1'den farkı: Paketleme Grubu, Sınırlı Miktar, Tank Kodu vb.

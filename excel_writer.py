@@ -22,6 +22,7 @@ from extractor import clean_product_name
 
 SHEET_NAME = "Tesis_Genelinde_Kull._ İnditex"
 SHEET_NAME_V2 = "KİMYASAL ENVANTER2026"  # Versiyon 2 dosyalarındaki sayfa adı
+SHEET_NAME_V3 = "SENTEZ TMGD+İSG"        # Versiyon 3 (Sentez TMGD+İSG) dosyalarındaki sayfa adı
 HEADER_ROW = 5
 STYLE_TEMPLATE_ROW = HEADER_ROW + 1  # hiç ürün yokken kullanılacak biçim satırı
 FOOTER_MARKER = "KONTROL EDEN"
@@ -540,3 +541,187 @@ if __name__ == "__main__":
 
     added = add_products(envanter, out, urunler)
     print("Eklenen satırlar:", added)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# VERSİYON 3 — SENTEZ TMGD+İSG
+# ═══════════════════════════════════════════════════════════════════════
+# V1/V2'den farklı olarak V3 boş şablon dosyası (xlsx) gerektirmez —
+# create_new_sentez_envanter openpyxl ile sıfırdan üretir. 22 sütunlu
+# başlık satırı, firma adı ve logo işlenir; ürünler add_products_v3
+# ile eklenir. Multi-satırlı hücreler (CAS listesi, H kodları) için
+# wrap-text ve otomatik satır yüksekliği ayarlanır.
+
+def _v3_header_style():
+    """V3 başlık satırı için font/fill/border/alignment biçim nesnelerini
+    tek yerde döner (create_new_sentez_envanter içinde kullanılır)."""
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    return {
+        "font":  Font(name="Calibri", size=10, bold=True, color="FFFFFF"),
+        "fill":  PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid"),
+        "align": Alignment(horizontal="center", vertical="center", wrap_text=True),
+        "border": Border(
+            left=Side(style="thin", color="808080"),
+            right=Side(style="thin", color="808080"),
+            top=Side(style="thin", color="808080"),
+            bottom=Side(style="thin", color="808080"),
+        ),
+    }
+
+
+def _v3_data_style():
+    """V3 veri satırları için font/border/alignment. Wrap-text açık
+    (multi-satırlı hücreler — CAS listesi, H kodları — için gerekli)."""
+    from openpyxl.styles import Font, Alignment, Border, Side
+    return {
+        "font":  Font(name="Calibri", size=10),
+        "align": Alignment(horizontal="left", vertical="center", wrap_text=True),
+        "border": Border(
+            left=Side(style="thin", color="D0D0D0"),
+            right=Side(style="thin", color="D0D0D0"),
+            top=Side(style="thin", color="D0D0D0"),
+            bottom=Side(style="thin", color="D0D0D0"),
+        ),
+    }
+
+
+# V3'te her sütunun tipik genişliği (karakter cinsinden). openpyxl'in
+# column_dimensions.width'i yaklaşık 1 karakter = 7 piksel.
+_V3_COLUMN_WIDTHS = {
+    "Kimyasal Üretici Firma Adı":       20,
+    "Kimyasal Tedarikçi Firma Adı":     20,
+    "KODU":                              12,
+    "KİMYASAL ADI":                      22,
+    "GELEN LOT BİLGİSİ":                 14,
+    "STOK LOT BİLGİSİ":                  14,
+    "KİMYASALIN TÜRÜ":                   16,
+    "GATEWAY'DE SEVİYE KAYDI":           14,
+    "Use Category":                      22,
+    "Use Type":                          22,
+    "CAS NO":                            14,
+    "MSDS/TDS RAPOR ÜÇ YILI AŞMAYACAK":  14,
+    "MSDS/TDS DİLİ":                     10,
+    "H KODLARI":                         12,
+    "TEHLİKE SINIFI":                    12,
+    "TEHLİKE ETİKETİ":                   14,
+    "DEĞERLENDİRME GÜNCEL":              12,
+    "GATEWAY DEĞERLENDİRME SONUCU":      18,
+    "GRS STANDARDI":                     14,
+    "GOTS VERSION 7.0":                  16,
+    "FONKSIONU":                         18,
+    "DEPOLANDIĞI YER":                   16,
+}
+
+
+def create_new_sentez_envanter(output_path: str, firma_adi: str,
+                                 logo_path: str = None,
+                                 hazirlayan_adi: str = None,
+                                 onaylayan_adi: str = None):
+    """V3 (Sentez TMGD+İSG) için 22 sütunlu boş envanter Excel'ini SIFIRDAN
+    programatik olarak üretir — V1/V2'nin aksine data/BOS_*.xlsx şablonuna
+    ihtiyaç duymaz. Dosya adı: firma_adi + '_sentez_envanter.xlsx'. Şablon
+    header satırı (satır 1) 22 sütun başlığı ile doldurulur; veri satırları
+    2'den itibaren eklenir (add_products_v3)."""
+    from openpyxl import Workbook
+    from matcher import V3_SUTUNLAR
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = SHEET_NAME_V3
+
+    # ── Başlık satırı (row 1) ──
+    header_style = _v3_header_style()
+    for c, baslik in enumerate(V3_SUTUNLAR, start=1):
+        cell = ws.cell(row=1, column=c, value=baslik)
+        cell.font = header_style["font"]
+        cell.fill = header_style["fill"]
+        cell.alignment = header_style["align"]
+        cell.border = header_style["border"]
+        # Sütun genişliği
+        col_letter = get_column_letter(c)
+        ws.column_dimensions[col_letter].width = _V3_COLUMN_WIDTHS.get(baslik, 15)
+
+    # Başlık satırı yüksekliği (2 satırlı başlıklar için)
+    ws.row_dimensions[1].height = 45
+
+    # Sabit ilk satır (freeze)
+    ws.freeze_panes = "A2"
+
+    # ── Firma bilgisi başlığı (opsiyonel — dosyanın en üstünde) ──
+    # V1/V2 firma adı/logosu ayrı satırlarda yer alıyor; V3'te ise sadece
+    # dosya adında saklanıyor. İstenirse burada A1'in üstüne firma başlığı
+    # eklenebilir; şimdilik minimalist tutuldu.
+
+    wb.save(output_path)
+    return output_path
+
+
+def add_products_v3(envanter_path: str, output_path: str, rows: list):
+    """V3 envanter Excel'ine yeni ürün satırları ekler. rows: matcher.
+    build_inventory_row_v3 çıktısı dict listesi. Multi-satırlı hücreler
+    (CAS listesi, H kodları) için satır yüksekliği otomatik ayarlanır.
+    Döner: eklenen Excel satır numaraları listesi."""
+    from matcher import V3_SUTUNLAR
+
+    wb = load_workbook(envanter_path)
+    if SHEET_NAME_V3 not in wb.sheetnames:
+        raise ValueError(
+            f"'{SHEET_NAME_V3}' sayfası bulunamadı. Bu dosya V3 (Sentez TMGD+İSG) "
+            f"formatında değil. Yeni bir V3 envanteri oluşturmak için 'Yeni envanter' "
+            f"seçeneğini kullanın."
+        )
+    ws = wb[SHEET_NAME_V3]
+
+    # Sütun başlıklarını satır 1'den oku; sırayı NORMAL yap (mevcut dosyada
+    # sütun sırası değişmiş olabilir).
+    header_to_col = {}
+    for c in range(1, ws.max_column + 1):
+        v = ws.cell(row=1, column=c).value
+        if isinstance(v, str) and v.strip():
+            header_to_col[v.strip()] = c
+
+    # Eğer beklenen sütunlardan bazıları eksikse hata ver
+    eksik = [s for s in V3_SUTUNLAR if s not in header_to_col]
+    if eksik:
+        raise ValueError(
+            f"V3 envanterinde şu sütunlar bulunamadı: {', '.join(eksik)}. "
+            f"Dosya bozulmuş olabilir; yeni envanter oluşturun."
+        )
+
+    # Son dolu veri satırını bul (satır 1 header)
+    son_satir = 1
+    for r in range(2, ws.max_row + 1):
+        if any(ws.cell(row=r, column=c).value not in (None, "") for c in range(1, ws.max_column + 1)):
+            son_satir = r
+
+    data_style = _v3_data_style()
+    eklenen = []
+    for row_dict in rows:
+        hedef_satir = son_satir + 1
+        for baslik, deger in row_dict.items():
+            if baslik == "durum":
+                continue
+            col = header_to_col.get(baslik)
+            if col is None:
+                continue
+            cell = ws.cell(row=hedef_satir, column=col, value=deger)
+            cell.font = data_style["font"]
+            cell.alignment = data_style["align"]
+            cell.border = data_style["border"]
+
+        # Multi-satırlı hücrelerin satır yüksekliğini otomatik ayarla:
+        # CAS listesi ve H kodları alt satır (\n) içerebilir. En uzun
+        # satır kaç newline içeriyorsa +1 satır yüksekliğine göre ayarla.
+        max_satir = 1
+        for deger in row_dict.values():
+            if isinstance(deger, str) and "\n" in deger:
+                satir_sayisi = deger.count("\n") + 1
+                if satir_sayisi > max_satir:
+                    max_satir = satir_sayisi
+        ws.row_dimensions[hedef_satir].height = max(18, 15 * max_satir)
+
+        eklenen.append(hedef_satir)
+        son_satir = hedef_satir
+
+    wb.save(output_path)
+    return eklenen

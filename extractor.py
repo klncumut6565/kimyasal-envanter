@@ -353,6 +353,171 @@ def extract_cas_no(text: str):
     return None
 
 
+def _cas_check_digit(cas: str) -> bool:
+    """CAS Registry check-digit doğrulaması: son rakam, önceki rakamların
+    sağdan sola i*d toplamının mod 10'una eşit olmalı. Telefon/fatura/
+    revizyon numaralarını eler."""
+    try:
+        parts = cas.split("-")
+        if len(parts) != 3:
+            return False
+        rakamlar = parts[0] + parts[1]
+        toplam = sum((i + 1) * int(d) for i, d in enumerate(reversed(rakamlar)))
+        return toplam % 10 == int(parts[2])
+    except Exception:
+        return False
+
+
+def extract_cas_listesi(text: str):
+    """V3 (Sentez TMGD+İSG) için: karışım ürünlerdeki TÜM bileşenlerin
+    CAS numaralarını Bölüm 3'ten çıkarır. Tekil ürünlerde tek elemanlı
+    liste, karışımlarda 2+ elemanlı liste döner. Check-digit ile geçersiz
+    numaralar (telefon, fatura vs.) elenir; sıra korunur, tekrarlar
+    silinir."""
+    bolum3 = find_section_text(text, 3, 4) or ""
+    bolum1 = find_section_text(text, 1, 2) or text[:3000]
+    bulunanlar = []
+    seen = set()
+
+    def _ekle(cas):
+        if cas and cas not in seen and _cas_check_digit(cas):
+            seen.add(cas)
+            bulunanlar.append(cas)
+
+    # 1) Bölüm 3'te etiketli tüm CAS'ler (karışım tablosu)
+    for m in re.finditer(r"CAS[\s.\-_]*(?:[Nn]o\.?|[Nn]umaras[ıi]|[Nn]r\.?)?\s*:?\s*(\d{2,7}-\d{2}-\d)", bolum3):
+        _ekle(m.group(1))
+    # 2) Bölüm 3'te etiketsiz (tablo düzenli MSDS'ler)
+    for m in re.finditer(r"\b(\d{2,7}-\d{2}-\d)\b", bolum3):
+        _ekle(m.group(1))
+    # 3) Yedek: Bölüm 1 (tek maddeli ürünlerde CAS burada olur)
+    if not bulunanlar:
+        for m in re.finditer(r"CAS[\s.\-_]*(?:[Nn]o\.?|[Nn]umaras[ıi]|[Nn]r\.?)?\s*:?\s*(\d{2,7}-\d{2}-\d)", bolum1):
+            _ekle(m.group(1))
+        for m in re.finditer(r"\b(\d{2,7}-\d{2}-\d)\b", bolum1):
+            _ekle(m.group(1))
+    return bulunanlar
+
+
+def extract_uretici(text: str):
+    """V3: Kimyasal Üretici Firma Adı — Bölüm 1'de tedarikçiden AYRI
+    olarak listelenen üreticiyi çıkarır. Türkiye MSDS'lerinde tipik
+    örüntü: 'Üretici Firma\\n[İsim]' veya 'Manufacturer: [İsim]'. Eğer
+    ayrı üretici yoksa None döner (o durumda tedarikçi = üretici kabul
+    edilebilir; app'te fallback yaparız)."""
+    bolum1 = find_section_text(text, 1, 2) or text[:3000]
+    patterns = [
+        r"(?i)Üretici\s+Firma\s+Ad[ıi]\s*:?\s*\n?\s*([^\n]{3,90})",
+        r"(?i)Üretici\s+Firma\s*\n\s*([^\n]{3,90})",
+        r"(?i)Üretici\s*:?\s*\n?\s*([^\n]{3,90})",
+        r"(?i)İmalatç[ıi]\s+Firma\s*:?\s*\n?\s*([^\n]{3,90})",
+        r"(?i)İmalatç[ıi]\s*:?\s*\n?\s*([^\n]{3,90})",
+        r"(?i)Manufacturer\s*:?\s*\n?\s*([^\n]{3,90})",
+        r"(?i)Producer\s*:?\s*\n?\s*([^\n]{3,90})",
+    ]
+    for p in patterns:
+        m = re.search(p, bolum1)
+        if m and m.group(1).strip():
+            deger = m.group(1).strip()
+            # "Tedarikçi" başlığından değere sıçramış olmasın kontrolü
+            if not re.match(r"(?i)Tedarikçi|Firma\s+Ad|Adres", deger):
+                return deger
+    return None
+
+
+def extract_urun_kodu(text: str):
+    """V3: Ürün Kodu — Bölüm 1'deki 'Ürün Kodu', 'Ürün No', 'Product Code',
+    'Article No', 'Katalog No' gibi etiketli değerler."""
+    bolum1 = find_section_text(text, 1, 2) or text[:3000]
+    patterns = [
+        r"(?i)Ürün\s+Kodu\s*:?\s*([A-Za-z0-9][\w\-./]{1,40})",
+        r"(?i)Ürün\s+No\.?\s*:?\s*([A-Za-z0-9][\w\-./]{1,40})",
+        r"(?i)Product\s+Code\s*:?\s*([A-Za-z0-9][\w\-./]{1,40})",
+        r"(?i)Product\s+No\.?\s*:?\s*([A-Za-z0-9][\w\-./]{1,40})",
+        r"(?i)Article\s+(?:No\.?|Number)\s*:?\s*([A-Za-z0-9][\w\-./]{1,40})",
+        r"(?i)Katalog\s+No\.?\s*:?\s*([A-Za-z0-9][\w\-./]{1,40})",
+        r"(?i)Malzeme\s+No\.?\s*:?\s*([A-Za-z0-9][\w\-./]{1,40})",
+    ]
+    for p in patterns:
+        m = re.search(p, bolum1)
+        if m:
+            kod = m.group(1).strip().rstrip(".,;:")
+            # Salt sayı değilse veya en az bir harf/tire içeriyorsa ürün kodu kabul et
+            if re.search(r"[A-Za-z\-]", kod):
+                return kod
+    return None
+
+
+def extract_kimyasalin_turu(text: str):
+    """V3: Kimyasalın Türü — MSDS Bölüm 1.2'deki tanım/kullanım metninden
+    ürünün genel kategorisini çıkarır (tampon asit, enzim, boya, iyon
+    dengeleyici, vs.). extract_fonksiyon ile örtüşür ama fonksiyon uzun
+    kullanım açıklamasıdır; tür daha kısa/kategorik olmalı. Yaygın
+    kategori sözcüklerini regex ile ara, yoksa None."""
+    bolum1 = find_section_text(text, 1, 2) or text[:3000]
+    # Yaygın Türkçe/İngilizce kimyasal tür anahtar kelimeleri (tekstil ağırlıklı)
+    turler = [
+        (r"(?i)tampon\s+asit", "TAMPON ASİT"),
+        (r"(?i)tampon\s+alkali", "TAMPON ALKALİ"),
+        (r"(?i)\bpH\s+düzenleyici", "pH DÜZENLEYİCİ"),
+        (r"(?i)ıslat[ıi]c[ıi]", "ISLATICI"),
+        (r"(?i)yumuşat[ıi]c[ıi]", "YUMUŞATICI"),
+        (r"(?i)dispersan|dağıt[ıi]c[ıi]", "DİSPERSAN"),
+        (r"(?i)sabitleyici|fiksatör", "SABİTLEYİCİ"),
+        (r"(?i)ağart[ıi]c[ıi]|bleach", "AĞARTICI"),
+        (r"(?i)indirgen|reducing\s+agent", "İNDİRGEN"),
+        (r"(?i)yükseltgen|oxidizing\s+agent", "YÜKSELTGEN"),
+        (r"(?i)\benzim\b|\benzyme\b", "ENZİM"),
+        (r"(?i)boya(?:r\s+madde)?|\bdye\b", "BOYA"),
+        (r"(?i)pigment", "PİGMENT"),
+        (r"(?i)çözücü|solvent", "ÇÖZÜCÜ"),
+        (r"(?i)deterjan|detergent", "DETERJAN"),
+        (r"(?i)köpük\s+kesici|antifoam|defoamer", "KÖPÜK KESİCİ"),
+        (r"(?i)yüzey\s+aktif|surfactant", "YÜZEY AKTİF"),
+        (r"(?i)katalizör|catalyst", "KATALİZÖR"),
+        (r"(?i)koruyucu|preservative|biocide|biyosit", "KORUYUCU/BİYOSİT"),
+        (r"(?i)şelatlay[ıi]c[ıi]|chelating\s+agent", "ŞELATLAYICI"),
+    ]
+    for desen, etiket in turler:
+        if re.search(desen, bolum1):
+            return etiket
+    return None
+
+
+# MSDS dili tespiti için yaygın belirteç kelimeler (sadece o dilde geçer)
+_DIL_BELIRTECI = {
+    "TÜRKÇE":    [r"\bGüvenlik\s+Bilgi\s+Formu\b", r"\bTehlike\s+ifadeler[ıi]?\b",
+                  r"\bZararl[ıi]l[ıi]k\b", r"\bTedarikçi\b", r"\bAmbalajlama\b"],
+    "İNGİLİZCE": [r"\bSafety\s+Data\s+Sheet\b", r"\bHazard\s+statements?\b",
+                  r"\bClassification\b", r"\bSupplier\b", r"\bIdentification\b"],
+    "ALMANCA":   [r"\bSicherheitsdatenblatt\b", r"\bGefahrenhinweise\b",
+                  r"\bZusammensetzung\b", r"\bLieferant\b"],
+    "FRANSIZCA": [r"\bFiche\s+de\s+données\s+de\s+sécurité\b", r"\bMentions?\s+de\s+danger\b",
+                  r"\bFournisseur\b"],
+    "İTALYANCA": [r"\bScheda\s+di\s+dati\s+di\s+sicurezza\b", r"\bIndicazioni?\s+di\s+pericolo\b"],
+    "İSPANYOLCA": [r"\bFicha\s+de\s+datos\s+de\s+seguridad\b", r"\bIndicaciones\s+de\s+peligro\b"],
+}
+
+
+def extract_msds_dili(text: str):
+    """V3: MSDS/TDS Dili — belge dilini yaygın etiket kelimelerin frekansına
+    bakarak tespit eder. En çok eşleşen dil kazanır; hiçbir dilde eşleşme
+    yoksa None döner."""
+    if not text:
+        return None
+    ornek = text[:5000]  # ilk 5000 karakter yeterli (başlıklar burada)
+    puanlar = {}
+    for dil, desenler in _DIL_BELIRTECI.items():
+        # re.IGNORECASE — MSDS başlıkları BÜYÜK HARF olabilir ("GÜVENLİK BİLGİ FORMU")
+        puan = sum(1 for d in desenler if re.search(d, ornek, re.IGNORECASE))
+        if puan > 0:
+            puanlar[dil] = puan
+    if not puanlar:
+        return None
+    # En yüksek puanlı dili döndür
+    return max(puanlar.items(), key=lambda kv: kv[1])[0]
+
+
 def extract_h_kodlari(text: str):
     """Bölüm 2'den H kodlarını (H317, H318+H319 vb.) çıkarır, tekilleştirir."""
     bolum2 = find_section_text(text, 2, 3) or text
@@ -421,6 +586,14 @@ def extract_full_info(pdf_path: str, text: str = None, ai_chain: list = None,
         "tehlikeli_tehlikesiz": extract_tehlikeli_tehlikesiz(text, h_kodlari),
         "tehlike_etiketi": extract_uyari_kelimesi(text),
         "revize_tarihi": extract_revize_tarihi(text),
+        # V3 (Sentez TMGD+İSG) alanları — V1/V2'yi hiç etkilemez, sadece
+        # ek alan ekler. build_inventory_row_v3 bunları okur, V1/V2
+        # ise "cas_no"/"tedarikci" gibi mevcut alanları okumaya devam eder.
+        "uretici": extract_uretici(text),
+        "urun_kodu": extract_urun_kodu(text),
+        "kimyasalin_turu": extract_kimyasalin_turu(text),
+        "msds_dili": extract_msds_dili(text),
+        "cas_listesi": extract_cas_listesi(text),
     }
 
     if ai_chain:

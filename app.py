@@ -9,9 +9,10 @@ from openpyxl import load_workbook
 
 from extractor import extract_adr_info, clean_product_name
 from ai_destek import ENGINE_LABELS, FAILOVER_ORDER, build_failover_chain
-from matcher import (build_inventory_row, build_inventory_row_v2,
-                       NOT_IN_SCOPE_TEXT, MANUAL_REVIEW_TEXT)
+from matcher import (build_inventory_row, build_inventory_row_v2, build_inventory_row_v3,
+                       NOT_IN_SCOPE_TEXT, MANUAL_REVIEW_TEXT, V3_SUTUNLAR)
 from excel_writer import (add_products, fill_or_append_v2, create_new_envanter,
+                            create_new_sentez_envanter, add_products_v3,
                             find_column, SHEET_NAME, HEADER_ROW)
 
 st.set_page_config(page_title="Kimyasal Envanter Oluşturucu", layout="wide")
@@ -66,7 +67,7 @@ def _sure_formatla(saniye: float) -> str:
     return f"{dk} dk {sn} sn"
 
 
-def render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix):
+def render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix, v3=False):
     """'Excel'e Aktar' butonu + sonuç mesajları + indirme butonu. Hem sayfanın
     üstünde hem altında çağrılır ki kullanıcı 500+ ürün varken sayfa sonunu
     aramak zorunda kalmasın."""
@@ -76,7 +77,12 @@ def render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix):
     st.write(f"**{len(secili_urunler)} ürün** Excel'e eklenmeye hazır.")
 
     firma_temiz = re.sub(r'[\\/*?:"<>|]', "", (firma_adi or "")).strip().replace(" ", "_")
-    dosya_adi = f"{firma_temiz}_envanter_guncellendi.xlsx" if (firma_temiz and not v2) else "envanter_guncellendi.xlsx"
+    if v3:
+        dosya_adi = f"{firma_temiz}_sentez_envanter.xlsx" if firma_temiz else "sentez_envanter.xlsx"
+    elif v2:
+        dosya_adi = "envanter_guncellendi.xlsx"
+    else:
+        dosya_adi = f"{firma_temiz}_envanter_guncellendi.xlsx" if firma_temiz else "envanter_guncellendi.xlsx"
     zip_adi = dosya_adi.replace(".xlsx", "_MSDS_ekli.zip")
 
     if st.button("📥 Tüm Seçili Ürünleri Excel'e Aktar", type="primary",
@@ -89,7 +95,9 @@ def render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix):
         rows = []
         pdf_relative_paths = []   # Excel'in göreceği göreli yol
         for u in secili_urunler:
-            if v2:
+            if v3:
+                row = build_inventory_row_v3(u["info"], u["kimyasal_adi"])
+            elif v2:
                 row = build_inventory_row_v2(u["info"], u["kimyasal_adi"], u["ambalaj"])
             else:
                 row = build_inventory_row(u["info"], TABLO_A_PATH, u["kimyasal_adi"], u["ambalaj"])
@@ -112,7 +120,16 @@ def render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix):
         out_path = os.path.join(TMP, dosya_adi)
         st.session_state.sonuc_mesajlari = []
 
-        if v2:
+        if v3:
+            try:
+                added = add_products_v3(envanter_path, out_path, rows)
+                st.session_state.sonuc_mesajlari.append(
+                    ("success", f"✅ {len(added)} ürün Sentez TMGD+İSG envanterine eklendi. "
+                                f"Boş bırakılan hücreler (LOT, GATEWAY, Use Cat/Type, "
+                                f"DEĞERLENDİRME, GRS, GOTS, DEPO) Excel'de elle doldurulmalıdır."))
+            except ValueError as e:
+                st.session_state.sonuc_mesajlari.append(("error", f"❌ {e}"))
+        elif v2:
             try:
                 sonuc = fill_or_append_v2(envanter_path, out_path, rows,
                                            pdf_relative_paths=pdf_relative_paths)
@@ -182,10 +199,12 @@ with st.sidebar:
     versiyon = st.radio(
         "Envanter dosyanızın formatı hangisi?",
         ["Versiyon 1 (Paketleme Grubu, Sınırlı Miktar vb. ayrıntılı sütunlar)",
-         "Versiyon 2 (basit format — sadece UN No / Sınıf / ADR İşareti)"],
+         "Versiyon 2 (basit format — sadece UN No / Sınıf / ADR İşareti)",
+         "Versiyon 3 (Sentez TMGD+İSG — 22 sütun, ZDHC/GRS/GOTS uyumlu)"],
         key="versiyon",
     )
     v2 = versiyon.startswith("Versiyon 2")
+    v3 = versiyon.startswith("Versiyon 3")
 
     st.header("1) Envanter Dosyası")
 
@@ -198,7 +217,43 @@ with st.sidebar:
     envanter_path = None
     firma_adi = ""
 
-    if v2:
+    if v3:
+        st.caption("**Versiyon 3 (Sentez TMGD+İSG)** — 22 sütunlu birleşik envanter. "
+                   "12 sütun (Üretici, Tedarikçi, Kod, Ad, CAS listesi, MSDS Dili, H "
+                   "Kodları, Tehlike Sınıfı/Etiketi, Fonksiyon, MSDS Tarihi, Kimyasalın "
+                   "Türü) PDF'ten OTOMATİK doldurulur. 10 sütun (LOT, GATEWAY, Use Cat/"
+                   "Type, DEĞERLENDİRME, GRS, GOTS, DEPO) BOŞ bırakılır — Excel'de elle "
+                   "doldurun. ADR Tablo A ile eşleştirme YAPILMAZ (Versiyon 1 için).")
+        firma_adi = st.text_input("Firma Adı", key="firma_adi_v3",
+                                   placeholder="Örn. ASUTEK")
+        firma_logo_file_v3 = st.file_uploader(
+            "Firma Logosu (opsiyonel, .png/.jpg)",
+            type=["png", "jpg", "jpeg"], key="firma_logo_v3")
+        hazirlayan_adi_v3 = st.text_input(
+            "Hazırlayan Adı (opsiyonel)", key="hazirlayan_adi_v3",
+            placeholder="Örn. Ahmet Yılmaz")
+        onaylayan_adi_v3 = st.text_input(
+            "Onaylayan Adı Soyadı (opsiyonel)", key="onaylayan_adi_v3",
+            placeholder="Örn. Mehmet Demir")
+
+        if firma_adi.strip():
+            firma_logo_path_v3 = (save_upload(firma_logo_file_v3, subdir="firma_logo_v3")
+                                   if firma_logo_file_v3 else None)
+            son_anahtar_v3 = (firma_adi.strip(), hazirlayan_adi_v3.strip(),
+                              onaylayan_adi_v3.strip(),
+                              firma_logo_file_v3.name if firma_logo_file_v3 else None)
+            if st.session_state.get("v3_envanter_anahtar") != son_anahtar_v3:
+                envanter_path = os.path.join(TMP, "sentez_envanter.xlsx")
+                create_new_sentez_envanter(envanter_path, firma_adi,
+                                            firma_logo_path_v3,
+                                            hazirlayan_adi_v3, onaylayan_adi_v3)
+                st.session_state.v3_envanter_anahtar = son_anahtar_v3
+                st.session_state.v3_envanter_path = envanter_path
+            envanter_path = st.session_state.v3_envanter_path
+            st.success("Yeni Sentez TMGD+İSG envanteri hazır ✓")
+        else:
+            st.info("Devam etmek için firma adını girin.")
+    elif v2:
         st.caption("Versiyon 2'de program, ürün adı zaten satırda varsa "
                     "boş ADR hücrelerini doldurur (ADR İşareti sütununa hiç dokunmaz); "
                     "eşleşme bulunamazsa o ürün atlanır, yeni satır eklenmez. "
@@ -319,9 +374,11 @@ with col_clear:
         st.session_state.sonuc_mesajlari = []
         st.rerun()
 
-mevcut_isimler = existing_names(envanter_path) if (envanter_path and not v2) else set()
+mevcut_isimler = existing_names(envanter_path) if (envanter_path and not v2 and not v3) else set()
 
-tablo_a_hazir = v2 or os.path.exists(TABLO_A_PATH)
+# V3 (Sentez TMGD+İSG) ADR Tablo A ile eşleştirme YAPMAZ — bu yüzden tablo
+# olmadan da çalışır. V2 zaten Tablo A gerektirmiyordu.
+tablo_a_hazir = v2 or v3 or os.path.exists(TABLO_A_PATH)
 
 if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
     if pdf_files:
@@ -355,7 +412,11 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
                         "sinif": None, "paketleme_grubu": None, "adr_kapsaminda": None,
                         "ham_metin_bulundu": False, "tedarikci": None, "fonksiyon": None,
                         "cas_no": None, "h_kodlari": None, "tehlikeli_tehlikesiz": None,
-                        "tehlike_etiketi": None, "okuma_hatasi": str(e),
+                        "tehlike_etiketi": None,
+                        # V3 alanları — hata durumunda hepsi None
+                        "uretici": None, "urun_kodu": None, "kimyasalin_turu": None,
+                        "msds_dili": None, "cas_listesi": [],
+                        "okuma_hatasi": str(e),
                     }
                 # Kimyasal Adı önce PDF İÇERİĞİNDEN aranır; içerikte bulunamazsa
                 # PDF dosya adına geri dönülür -- ama clean_product_name() bu
@@ -379,19 +440,26 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
     st.divider()
     secili_urunler = [u for u in st.session_state.urunler.values() if u["dahil_et"]]
     st.subheader("⬆️ Hızlı Aktarım (sayfa sonuna inmenize gerek yok)")
-    render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix="top")
+    render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix="top", v3=v3)
     st.divider()
 
     st.header("4) Çıkarılan Bilgileri Gözden Geçirin")
 
     for fname, urun in st.session_state.urunler.items():
         info = urun["info"]
-        durum = (
-            "🔴 PDF OKUNAMADI (dosya bozuk olabilir)" if info.get("okuma_hatasi")
-            else "🟢 ADR kapsamında - Tablo A eşleşmesi bulundu" if info.get("adr_kapsaminda") and info.get("un_no")
-            else "⚪ ADR kapsamında değil" if info.get("adr_kapsaminda") is False
-            else "🟠 MANUEL KONTROL GEREKLİ (Bölüm 14 otomatik okunamadı)"
-        )
+        if v3:
+            # V3'te ADR kapsam durumu yerine V3 alanlarından ne bulundu özeti göster
+            durum = (
+                "🔴 PDF OKUNAMADI (dosya bozuk olabilir)" if info.get("okuma_hatasi")
+                else "🟢 Sentez TMGD+İSG verileri çıkarıldı"
+            )
+        else:
+            durum = (
+                "🔴 PDF OKUNAMADI (dosya bozuk olabilir)" if info.get("okuma_hatasi")
+                else "🟢 ADR kapsamında - Tablo A eşleşmesi bulundu" if info.get("adr_kapsaminda") and info.get("un_no")
+                else "⚪ ADR kapsamında değil" if info.get("adr_kapsaminda") is False
+                else "🟠 MANUEL KONTROL GEREKLİ (Bölüm 14 otomatik okunamadı)"
+            )
 
         with st.expander(f"📄 {fname} — {durum}", expanded=True):
             if info.get("okuma_hatasi"):
@@ -412,53 +480,84 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
                             f"ℹ️ Bu isim envanterde bulunursa boş hücreleri dolduracak; "
                             "bulunamazsa bu ürün ATLANACAK (Versiyon 2 yeni satır eklemez)."
                         )
-                elif urun["kimyasal_adi"].strip().upper() in mevcut_isimler:
+                elif not v3 and urun["kimyasal_adi"].strip().upper() in mevcut_isimler:
                     st.warning(
                         f"⚠️ '{urun['kimyasal_adi']}' adı envanterde zaten mevcut! "
                         "Mükerrer satır oluşturmamak için isimi kontrol edin "
                         "veya farklı bir isim girin."
                     )
 
-                amb_secenekleri = ["Ambalaj", "Tank", "Dökme"] if v2 else ["AMBALAJLI", "TANK", "DÖKME"]
-                urun["ambalaj"] = st.selectbox(
-                    "Ambalajlı / Tank / Dökme",
-                    amb_secenekleri,
-                    index=amb_secenekleri.index(urun["ambalaj"]) if urun["ambalaj"] in amb_secenekleri else 0,
-                    key=f"amb_{fname}",
-                )
+                # V3'te ambalaj/tank/dökme seçimi yok (o sütun V3'te yer almıyor)
+                if not v3:
+                    amb_secenekleri = ["Ambalaj", "Tank", "Dökme"] if v2 else ["AMBALAJLI", "TANK", "DÖKME"]
+                    urun["ambalaj"] = st.selectbox(
+                        "Ambalajlı / Tank / Dökme",
+                        amb_secenekleri,
+                        index=amb_secenekleri.index(urun["ambalaj"]) if urun["ambalaj"] in amb_secenekleri else 0,
+                        key=f"amb_{fname}",
+                    )
 
                 urun["dahil_et"] = st.checkbox("Bu ürünü Excel'e eklemeye dahil et", value=urun["dahil_et"], key=f"dahil_{fname}")
 
             with col2:
-                st.markdown("**Bölüm 14'ten okunan:**")
-                st.write(f"- UN No: `{info.get('un_no') or '-'}`")
-                st.write(f"- Sınıf: `{info.get('sinif') or '-'}`")
-                st.write(f"- Paketleme Grubu: `{info.get('paketleme_grubu') or '-'}`")
-                st.write(f"- Revize Tarihi: `{info.get('revize_tarihi') or '-'}`")
+                if v3:
+                    st.markdown("**PDF'ten çıkarılan V3 verileri:**")
+                    cas_gosterim = info.get("cas_listesi") or ([info["cas_no"]] if info.get("cas_no") else [])
+                    st.write(f"- Üretici: `{info.get('uretici') or '-'}`")
+                    st.write(f"- Tedarikçi: `{info.get('tedarikci') or '-'}`")
+                    st.write(f"- Kod: `{info.get('urun_kodu') or '-'}`")
+                    st.write(f"- Türü: `{info.get('kimyasalin_turu') or '-'}`")
+                    st.write(f"- CAS ({len(cas_gosterim)} adet): `{', '.join(cas_gosterim) if cas_gosterim else '-'}`")
+                    st.write(f"- MSDS Dili: `{info.get('msds_dili') or '-'}`")
+                    st.write(f"- MSDS Tarihi: `{info.get('revize_tarihi') or '-'}`")
+                else:
+                    st.markdown("**Bölüm 14'ten okunan:**")
+                    st.write(f"- UN No: `{info.get('un_no') or '-'}`")
+                    st.write(f"- Sınıf: `{info.get('sinif') or '-'}`")
+                    st.write(f"- Paketleme Grubu: `{info.get('paketleme_grubu') or '-'}`")
+                    st.write(f"- Revize Tarihi: `{info.get('revize_tarihi') or '-'}`")
 
-            if v2:
+            if v3:
+                row_preview = build_inventory_row_v3(info, urun["kimyasal_adi"])
+                st.markdown("**Envantere yazılacak 22 sütun (10 manuel alan BOŞ):**")
+                # V3 önizlemesinde boş alanlar 'BOŞ (manuel doldurun)' olarak gösterilsin
+                sunum = {}
+                for k, val in row_preview.items():
+                    if k == "durum":
+                        continue
+                    if val is None or val == "":
+                        sunum[k] = ["⬜ BOŞ (Excel'de elle doldurun)"]
+                    else:
+                        # Multi-satır hücrelerini önizlemede birleştir
+                        gostergec = str(val).replace("\n", " • ")
+                        sunum[k] = [gostergec]
+                st.table(sunum)
+            elif v2:
                 row_preview = build_inventory_row_v2(info, urun["kimyasal_adi"], urun["ambalaj"])
-            else:
-                row_preview = build_inventory_row(info, TABLO_A_PATH, urun["kimyasal_adi"], urun["ambalaj"])
-
-            if row_preview["durum"] == "ok":
-                if v2:
+                if row_preview["durum"] == "ok":
                     st.markdown("**Bölüm 14'ten yazılacak veriler:**")
                     st.table({k: [v] for k, v in row_preview.items()
                               if k not in ("Kimyasal Adı", "Ambalaj/Tank", "MSDS/SDS TARİHİ", "durum")})
+                elif row_preview["durum"] == "manual_review":
+                    st.error("Bu satır 'MANUEL KONTROL GEREKLİ' olarak işaretlenecek. "
+                             "Excel'e aktarıldıktan sonra ilgili hücreleri elle düzeltin.")
                 else:
+                    st.info("Bu ürün SDS Bölüm 14'e göre ADR kapsamında değil; ilgili sabit metin yazılacak.")
+            else:
+                row_preview = build_inventory_row(info, TABLO_A_PATH, urun["kimyasal_adi"], urun["ambalaj"])
+                if row_preview["durum"] == "ok":
                     st.markdown("**Tablo A'dan eşleşen veriler:**")
                     st.table({k: [v] for k, v in row_preview.items()
                               if k not in ("Kimyasal Adı", "AMBALAJLI/TANK/DÖKME", "MSDS/SDS TARİHİ", "durum")})
-            elif row_preview["durum"] == "manual_review":
-                st.error("Bu satır 'MANUEL KONTROL GEREKLİ' olarak işaretlenecek. "
-                         "Excel'e aktarıldıktan sonra ilgili hücreleri elle düzeltin.")
-            else:
-                st.info("Bu ürün SDS Bölüm 14'e göre ADR kapsamında değil; ilgili sabit metin yazılacak.")
+                elif row_preview["durum"] == "manual_review":
+                    st.error("Bu satır 'MANUEL KONTROL GEREKLİ' olarak işaretlenecek. "
+                             "Excel'e aktarıldıktan sonra ilgili hücreleri elle düzeltin.")
+                else:
+                    st.info("Bu ürün SDS Bölüm 14'e göre ADR kapsamında değil; ilgili sabit metin yazılacak.")
 
     st.divider()
     secili_urunler = [u for u in st.session_state.urunler.values() if u["dahil_et"]]
-    render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix="bottom")
+    render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix="bottom", v3=v3)
 elif not envanter_path:
     st.info("Önce sol menüden envanter Excel dosyasını yükleyin.")
 elif not st.session_state.urunler:
