@@ -102,10 +102,19 @@ def _is_daily_quota_exhausted(msg: str) -> bool:
 
 
 def _is_daily_exhausted_error(err: Exception) -> bool:
+    """Bu motoru atlamamız gereken durumlar: GÜNLÜK kota bitişi, belge sığmıyor,
+    model bulunamadı. Hem yeni Türkçe (GUNLUK_KOTA_DOLDU, BELGE_COK_BUYUK,
+    MODEL_BULUNAMADI, GECERSIZ_ISTEK_400) hem eski İngilizce hata kodlarını
+    (backward compat) yakalar."""
     msg = str(err).upper()
-    return any(k in msg for k in ["DAILY_QUOTA_EXHAUSTED", "RESOURCE_EXHAUSTED", "PAYLOAD_TOO_LARGE",
-                                  "MODEL_NOT_FOUND", "BAD_REQUEST_400",
-                                  "GÜNLÜK ÜCRETSIZ LIMIT", "RPD", "PER DAY", "REQUESTS PER DAY"])
+    return any(k in msg for k in [
+        # Yeni Türkçe hata kodları
+        "GUNLUK_KOTA_DOLDU", "BELGE_COK_BUYUK", "MODEL_BULUNAMADI", "GECERSIZ_ISTEK_400",
+        # Eski İngilizce hata kodları (geriye uyumluluk)
+        "DAILY_QUOTA_EXHAUSTED", "PAYLOAD_TOO_LARGE", "MODEL_NOT_FOUND", "BAD_REQUEST_400",
+        # Üçüncü parti servis kodları (Google/vb. ham mesajları)
+        "RESOURCE_EXHAUSTED", "GÜNLÜK ÜCRETSIZ LIMIT", "RPD", "PER DAY", "REQUESTS PER DAY",
+    ])
 
 
 def _parse_retry_delay(msg: str) -> float:
@@ -145,7 +154,11 @@ def json_ayikla(content) -> dict:
             return json.loads(aday)
         except json.JSONDecodeError:
             continue
-    raise RuntimeError("JSON_BOZUK: Yapay zekâ geçerli JSON döndürmedi.")
+    raise RuntimeError(
+        "JSON_BOZUK: Yapay zekâ motoru geçerli JSON formatında yanıt döndürmedi. "
+        "Model belge içeriğini kavrayamamış olabilir; başka bir motora düşülüyor. "
+        "Sürekli tekrarlıyorsa daha güçlü bir model seçin."
+    )
 
 
 def _build_tamamlama_prompt(eksik_alanlar: list) -> str:
@@ -193,24 +206,44 @@ def _call_openai_compatible(api_key: str, model: str, base_url: str,
         try:
             resp = requests.post(url, headers=headers, json=_payload(), timeout=120)
             if resp.status_code == 413:
-                raise RuntimeError("PAYLOAD_TOO_LARGE: Belge bu motor için çok büyük.")
+                raise RuntimeError(
+                    "BELGE_COK_BUYUK: Yüklediğiniz MSDS belgesi bu AI motoru için çok büyük. "
+                    "Daha yüksek kapasiteli bir motora (Gemini/Claude) geçiliyor. "
+                    "(HTTP 413 Payload Too Large)"
+                )
             if resp.status_code == 429:
                 body = resp.text
                 low = body.lower()
                 if _is_daily_quota_exhausted(body) or "rpd" in low or "per day" in low:
-                    raise RuntimeError("DAILY_QUOTA_EXHAUSTED: " + body[:300])
+                    raise RuntimeError(
+                        "GUNLUK_KOTA_DOLDU: Bu AI motorunun günlük ücretsiz kullanım limiti "
+                        "doldu. Bir sonraki güne kadar başka bir motora düşülüyor. "
+                        f"Sağlayıcının cevabı: {body[:200]}"
+                    )
                 wait = _parse_retry_delay(body) or 20.0
                 if attempt < max_retries - 1:
                     time.sleep(min(65.0, wait))
                     continue
-                raise RuntimeError("RATE_LIMIT_MINUTE: " + body[:200])
+                raise RuntimeError(
+                    "DAKIKALIK_LIMIT: AI motoruna kısa sürede çok istek gönderildi (dakikalık "
+                    "hız limiti). Kısa bir bekleme sonrası tekrar denenecek veya başka motora "
+                    f"düşülecek. Sağlayıcının cevabı: {body[:200]}"
+                )
             if resp.status_code == 404:
-                raise RuntimeError(f"MODEL_NOT_FOUND: '{model}' modeli bulunamadı.")
+                raise RuntimeError(
+                    f"MODEL_BULUNAMADI: '{model}' modeli AI sağlayıcısında bulunamadı. "
+                    "Model adı geçersiz veya artık desteklenmiyor olabilir. Otomatik olarak "
+                    "başka bir modele düşülüyor."
+                )
             if resp.status_code == 400:
                 if use_json_format:
                     use_json_format = False
                     continue
-                raise RuntimeError(f"BAD_REQUEST_400: {resp.text[:200]}")
+                raise RuntimeError(
+                    f"GECERSIZ_ISTEK_400: AI sağlayıcısı isteği reddetti (Hatalı İstek). "
+                    f"İstek biçimi veya parametrelerinde bir sorun var. "
+                    f"Sağlayıcının cevabı: {resp.text[:200]}"
+                )
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]
             return json_ayikla(content)
@@ -220,7 +253,11 @@ def _call_openai_compatible(api_key: str, model: str, base_url: str,
             last_err = e
             msg = str(e)
             if "413" in msg:
-                raise RuntimeError("PAYLOAD_TOO_LARGE: " + msg)
+                raise RuntimeError(
+                    "BELGE_COK_BUYUK: Yüklediğiniz MSDS belgesi bu AI motoru için çok büyük. "
+                    "Daha yüksek kapasiteli bir motora geçiliyor. "
+                    f"(Teknik: {msg[:200]})"
+                )
             if any(c in msg for c in ["500", "502", "503", "504", "timeout", "Timeout"]) and attempt < max_retries - 1:
                 time.sleep(3 * (attempt + 1))
                 continue
@@ -230,13 +267,19 @@ def _call_openai_compatible(api_key: str, model: str, base_url: str,
 
 def call_groq(prompt: str, api_key: str, model: str) -> dict:
     if not api_key:
-        raise RuntimeError("Groq API anahtarı girilmemiş.")
+        raise RuntimeError(
+            "GROQ_ANAHTARI_YOK: Groq API anahtarı girilmemiş. console.groq.com/keys "
+            "adresinden ücretsiz anahtar alıp sol menüye girin (kredi kartı gerekmez)."
+        )
     return _call_openai_compatible(api_key, model, "https://api.groq.com/openai/v1", prompt)
 
 
 def call_openrouter(prompt: str, api_key: str, model: str) -> dict:
     if not api_key:
-        raise RuntimeError("OpenRouter API anahtarı girilmemiş.")
+        raise RuntimeError(
+            "OPENROUTER_ANAHTARI_YOK: OpenRouter API anahtarı girilmemiş. "
+            "openrouter.ai/keys adresinden ücretsiz anahtar alıp sol menüye girin."
+        )
     if not model or model == "openrouter/free":
         model = "openrouter/free"
     try:
@@ -245,7 +288,7 @@ def call_openrouter(prompt: str, api_key: str, model: str) -> dict:
             extra_headers={"HTTP-Referer": "https://kimyasal-envanter.streamlit.app",
                            "X-Title": "Kimyasal Envanter"})
     except RuntimeError as e:
-        if "MODEL_NOT_FOUND" in str(e) and model != "openrouter/free":
+        if ("MODEL_BULUNAMADI" in str(e) or "MODEL_NOT_FOUND" in str(e)) and model != "openrouter/free":
             return _call_openai_compatible(
                 api_key, "openrouter/free", "https://openrouter.ai/api/v1", prompt,
                 extra_headers={"HTTP-Referer": "https://kimyasal-envanter.streamlit.app",
@@ -255,13 +298,15 @@ def call_openrouter(prompt: str, api_key: str, model: str) -> dict:
 
 def call_openai(prompt: str, api_key: str, model: str) -> dict:
     if not api_key:
-        raise RuntimeError("OpenAI API anahtarı girilmemiş.")
+        raise RuntimeError("OPENAI_ANAHTARI_YOK: OpenAI API anahtarı girilmemiş. "
+                           "Sol menüden anahtarınızı girin veya farklı bir motor seçin.")
     return _call_openai_compatible(api_key, model, "https://api.openai.com/v1", prompt)
 
 
 def call_claude(prompt: str, api_key: str, model: str, max_retries: int = 4) -> dict:
     if not api_key:
-        raise RuntimeError("Claude API anahtarı girilmemiş.")
+        raise RuntimeError("CLAUDE_ANAHTARI_YOK: Claude API anahtarı girilmemiş. "
+                           "Sol menüden anahtarınızı girin veya farklı bir motor seçin.")
     url = "https://api.anthropic.com/v1/messages"
     headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
     payload = {
@@ -279,11 +324,22 @@ def call_claude(prompt: str, api_key: str, model: str, max_retries: int = 4) -> 
                 if attempt < max_retries - 1:
                     time.sleep(20.0)
                     continue
-                raise RuntimeError("RATE_LIMIT_MINUTE: " + resp.text[:200])
+                raise RuntimeError(
+                    "DAKIKALIK_LIMIT: Claude'a kısa sürede çok istek gönderildi (dakikalık "
+                    "hız limiti). Otomatik olarak başka bir motora düşülüyor. "
+                    f"Sağlayıcının cevabı: {resp.text[:200]}"
+                )
             if 400 <= resp.status_code < 500:
                 if resp.status_code in (401, 403):
-                    raise RuntimeError("API_KEY_INVALID: Claude anahtarı geçersiz/yetkisiz.")
-                raise RuntimeError(f"CLAUDE_{resp.status_code}: {resp.text[:200]}")
+                    raise RuntimeError(
+                        "API_ANAHTARI_GECERSIZ: Girdiğiniz Claude API anahtarı geçersiz veya "
+                        "yetkisiz. console.anthropic.com'dan yeni bir anahtar oluşturup "
+                        "sol menüye girin."
+                    )
+                raise RuntimeError(
+                    f"CLAUDE_HATA_{resp.status_code}: Anthropic API isteği hata verdi. "
+                    f"Sağlayıcının cevabı: {resp.text[:200]}"
+                )
             resp.raise_for_status()
             data = resp.json()
             content = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
@@ -301,9 +357,14 @@ def call_claude(prompt: str, api_key: str, model: str, max_retries: int = 4) -> 
 
 def call_gemini(prompt: str, api_key: str, model: str, max_retries: int = 4) -> dict:
     if not GEMINI_SDK_OK:
-        raise RuntimeError("google-genai kütüphanesi kurulu değil. `pip install google-genai`")
+        raise RuntimeError(
+            "GEMINI_KUTUPHANE_YOK: google-genai kütüphanesi kurulu değil. "
+            "Streamlit Cloud'da requirements.txt'e 'google-genai>=1.0.0' ekleyip yeniden "
+            "deploy edin. Yerel için: `pip install google-genai`."
+        )
     if not api_key:
-        raise RuntimeError("Gemini API anahtarı girilmemiş.")
+        raise RuntimeError("GEMINI_ANAHTARI_YOK: Gemini API anahtarı girilmemiş. "
+                           "aistudio.google.com/apikey adresinden ücretsiz anahtar alın.")
     client = genai.Client(api_key=api_key)
     last_err = None
     for attempt in range(max_retries):
@@ -317,7 +378,16 @@ def call_gemini(prompt: str, api_key: str, model: str, max_retries: int = 4) -> 
             last_err = e
             msg = str(e)
             if "429" in msg and _is_daily_quota_exhausted(msg):
-                raise RuntimeError("DAILY_QUOTA_EXHAUSTED: Gemini günlük ücretsiz limiti doldu.")
+                raise RuntimeError(
+                    "GUNLUK_KOTA_DOLDU: Gemini günlük ücretsiz kullanım limiti doldu. "
+                    "Bir sonraki güne kadar başka bir motora (Groq/OpenRouter) düşülüyor. "
+                    "Alternatif: aistudio.google.com/apikey'den başka bir anahtar kullanın."
+                )
+            if "404" in msg and "no longer available" in msg.lower():
+                raise RuntimeError(
+                    f"MODEL_BULUNAMADI: '{model}' modeli Google tarafından yeni kullanıcılara "
+                    f"kapatıldı. Otomatik olarak güncel modele geçiliyor. (Teknik: {msg[:150]})"
+                )
             if any(c in msg for c in ["429", "503", "500"]) and attempt < max_retries - 1:
                 time.sleep(_parse_retry_delay(msg) or (3 * (attempt + 1)))
                 continue
@@ -336,7 +406,11 @@ def call_ollama(prompt: str, model: str, base_url: str) -> dict:
         resp.raise_for_status()
         return json_ayikla(resp.json().get("response", "{}"))
     except requests.exceptions.Timeout:
-        raise RuntimeError("OLLAMA_TIMEOUT: Yerel model çok yavaş yanıt verdi.")
+        raise RuntimeError(
+            "OLLAMA_ZAMAN_ASIMI: Yerel Ollama modeli 5 dakika içinde yanıt veremedi. "
+            "Model çok büyük veya bilgisayarınız yetersiz olabilir. Daha küçük bir model "
+            "(örn. 'llama3.2:3b' yerine 'phi3:mini') deneyin veya bulut motorunu kullanın."
+        )
 
 
 def _call_single_model(engine, model, prompt, ollama_url, keys):
