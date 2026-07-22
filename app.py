@@ -224,35 +224,80 @@ with st.sidebar:
                    "Türü) PDF'ten OTOMATİK doldurulur. 10 sütun (LOT, GATEWAY, Use Cat/"
                    "Type, DEĞERLENDİRME, GRS, GOTS, DEPO) BOŞ bırakılır — Excel'de elle "
                    "doldurun. ADR Tablo A ile eşleştirme YAPILMAZ (Versiyon 1 için).")
-        firma_adi = st.text_input("Firma Adı", key="firma_adi_v3",
-                                   placeholder="Örn. ASUTEK")
-        firma_logo_file_v3 = st.file_uploader(
-            "Firma Logosu (opsiyonel, .png/.jpg)",
-            type=["png", "jpg", "jpeg"], key="firma_logo_v3")
-        hazirlayan_adi_v3 = st.text_input(
-            "Hazırlayan Adı (opsiyonel)", key="hazirlayan_adi_v3",
-            placeholder="Örn. Ahmet Yılmaz")
-        onaylayan_adi_v3 = st.text_input(
-            "Onaylayan Adı Soyadı (opsiyonel)", key="onaylayan_adi_v3",
-            placeholder="Örn. Mehmet Demir")
 
-        if firma_adi.strip():
-            firma_logo_path_v3 = (save_upload(firma_logo_file_v3, subdir="firma_logo_v3")
-                                   if firma_logo_file_v3 else None)
-            son_anahtar_v3 = (firma_adi.strip(), hazirlayan_adi_v3.strip(),
-                              onaylayan_adi_v3.strip(),
-                              firma_logo_file_v3.name if firma_logo_file_v3 else None)
-            if st.session_state.get("v3_envanter_anahtar") != son_anahtar_v3:
-                envanter_path = os.path.join(TMP, "sentez_envanter.xlsx")
-                create_new_sentez_envanter(envanter_path, firma_adi,
-                                            firma_logo_path_v3,
-                                            hazirlayan_adi_v3, onaylayan_adi_v3)
-                st.session_state.v3_envanter_anahtar = son_anahtar_v3
-                st.session_state.v3_envanter_path = envanter_path
-            envanter_path = st.session_state.v3_envanter_path
-            st.success("Yeni Sentez TMGD+İSG envanteri hazır ✓")
+        mod_v3 = st.radio(
+            "Ne yapmak istiyorsunuz?",
+            ["🆕 Yeni Sentez TMGD+İSG envanteri oluştur",
+             "📂 Bu programla daha önce oluşturulmuş bir V3 envanterini güncelle"],
+            key="mod_v3",
+        )
+
+        if mod_v3.startswith("🆕"):
+            st.caption("Firma bilgilerini girdiğinizde 22 sütunlu boş şablon otomatik "
+                       "hazırlanır (data/BOS_*.xlsx dosyası GEREKMEZ).")
+            firma_adi = st.text_input("Firma Adı", key="firma_adi_v3",
+                                       placeholder="Örn. ASUTEK")
+            firma_logo_file_v3 = st.file_uploader(
+                "Firma Logosu (opsiyonel, .png/.jpg)",
+                type=["png", "jpg", "jpeg"], key="firma_logo_v3")
+            hazirlayan_adi_v3 = st.text_input(
+                "Hazırlayan Adı (opsiyonel)", key="hazirlayan_adi_v3",
+                placeholder="Örn. Ahmet Yılmaz")
+            onaylayan_adi_v3 = st.text_input(
+                "Onaylayan Adı Soyadı (opsiyonel)", key="onaylayan_adi_v3",
+                placeholder="Örn. Mehmet Demir")
+
+            if firma_adi.strip():
+                firma_logo_path_v3 = (save_upload(firma_logo_file_v3, subdir="firma_logo_v3")
+                                       if firma_logo_file_v3 else None)
+                son_anahtar_v3 = (firma_adi.strip(), hazirlayan_adi_v3.strip(),
+                                  onaylayan_adi_v3.strip(),
+                                  firma_logo_file_v3.name if firma_logo_file_v3 else None)
+                if st.session_state.get("v3_envanter_anahtar") != son_anahtar_v3:
+                    envanter_path = os.path.join(TMP, "sentez_envanter.xlsx")
+                    create_new_sentez_envanter(envanter_path, firma_adi,
+                                                firma_logo_path_v3,
+                                                hazirlayan_adi_v3, onaylayan_adi_v3)
+                    st.session_state.v3_envanter_anahtar = son_anahtar_v3
+                    st.session_state.v3_envanter_path = envanter_path
+                envanter_path = st.session_state.v3_envanter_path
+                st.success("Yeni Sentez TMGD+İSG envanteri hazır ✓")
+            else:
+                st.info("Devam etmek için firma adını girin.")
         else:
-            st.info("Devam etmek için firma adını girin.")
+            # ── Mevcut V3 envanteri güncelle ─────────────────────────────
+            st.caption("Bu programla daha önce oluşturulmuş bir V3 envanter Excel'i "
+                       "yükleyin — yeni ürünler mevcut satırların altına eklenir.")
+            firma_adi = st.text_input(
+                "Firma Adı (sadece indirilecek dosya adında kullanılır)",
+                key="firma_adi_v3_existing", placeholder="Örn. ASUTEK")
+            envanter_file_v3 = st.file_uploader(
+                "V3 Envanter Excel Dosyası (.xlsx) — 'SENTEZ TMGD+İSG' sayfası içermeli",
+                type=["xlsx"], key="envanter_v3")
+            if envanter_file_v3:
+                envanter_path = save_upload(envanter_file_v3)
+                # Yüklenen dosyanın gerçekten V3 formatı olup olmadığını doğrula:
+                # SHEET_NAME_V3 sayfası yoksa kullanıcıya net bir hata göster.
+                try:
+                    from openpyxl import load_workbook
+                    from excel_writer import SHEET_NAME_V3
+                    _wb_kontrol = load_workbook(envanter_path, read_only=True)
+                    if SHEET_NAME_V3 not in _wb_kontrol.sheetnames:
+                        st.error(
+                            f"❌ Bu dosyada '{SHEET_NAME_V3}' sayfası bulunamadı. "
+                            f"Yüklenen Excel V3 (Sentez TMGD+İSG) formatında değil. "
+                            f"Sayfalar: {', '.join(_wb_kontrol.sheetnames)}. "
+                            f"Doğru dosyayı yükleyin veya 'Yeni envanter oluştur' seçin."
+                        )
+                        envanter_path = None
+                    else:
+                        st.success("V3 envanter dosyası yüklendi ✓")
+                    _wb_kontrol.close()
+                except Exception as e:
+                    st.error(f"❌ Dosya okunamadı: {e}")
+                    envanter_path = None
+            else:
+                st.info("Devam etmek için V3 envanter Excel dosyasını yükleyin.")
     elif v2:
         st.caption("Versiyon 2'de program, ürün adı zaten satırda varsa "
                     "boş ADR hücrelerini doldurur (ADR İşareti sütununa hiç dokunmaz); "
