@@ -51,13 +51,20 @@ except Exception:
 # key: extractor.py'deki sözlük anahtarıyla BİREBİR aynı olmalı (matcher.py
 # bu anahtarları doğrudan okuyor).
 ALAN_ACIKLAMALARI = {
-    "tedarikci": "Tedarikçi/üretici firma adı (genelde Bölüm 1.3 'Tedarikçi' veya 'Firma Adı')",
-    "fonksiyon": "Ürünün kullanım amacı / fonksiyonu (Bölüm 1.2 'Belirlenmiş Kullanımlar')",
-    "cas_no": "CAS numarası (Bölüm 3), format: 000-00-0 (birden fazla bileşen varsa ana/ilk bileşeninki)",
-    "h_kodlari": "H kodları (Bölüm 2), virgülle ayrılmış liste, örn: 'H302, H315, H319'",
-    "tehlikeli_tehlikesiz": "Ürün 'Tehlikeli' mi 'Tehlikesiz' mi (Bölüm 2 sınıflandırmasına göre, SADECE bu iki değerden biri)",
-    "tehlike_etiketi": "Uyarı/işaret kelimesi (Bölüm 2.2), SADECE 'Tehlike' veya 'Dikkat'",
-    "revize_tarihi": "Belgenin revizyon/güncelleme/yayın tarihi (genelde Bölüm 16 veya belge başlığında), format GG.AA.YYYY",
+    # ═══ V1/V2 alanları ═══
+    "tedarikci": "Tedarikçi firma adı — MSDS'in Bölüm 1.3'ündeki 'Tedarikçi' veya 'Firma Adı' altında görünen firma. Üreticiden farklıysa satıcı/distribütör firmadır. Sadece firma adını dön (adres, telefon YAZMA).",
+    "fonksiyon": "Ürünün kullanım amacı / fonksiyonu — MSDS Bölüm 1.2 'Belirlenmiş Kullanımlar' altındaki metin (örn: 'Tekstilde boyama işlemi için pH düzenleyici', 'Metal yüzey temizleyici').",
+    "cas_no": "CAS numarası (Bölüm 3), format: 000-00-0. Karışım ürünlerde ana/ilk bileşenin CAS'i. Tek maddeli ürünlerde Bölüm 1'deki CAS'i döndür.",
+    "h_kodlari": "H kodları (Bölüm 2), virgülle ayrılmış liste. Örn: 'H302, H315, H319'. EUH kodları da dahil edilebilir (EUH031, EUH208 gibi).",
+    "tehlikeli_tehlikesiz": "Ürün 'Tehlikeli' mi 'Tehlikesiz' mi (Bölüm 2 sınıflandırmasına göre). SADECE bu iki değerden birini dön.",
+    "tehlike_etiketi": "Uyarı/işaret kelimesi (Bölüm 2.2). SADECE 'Tehlike' veya 'Dikkat' değerlerinden birini dön.",
+    "revize_tarihi": "Belgenin revizyon/güncelleme/yayın tarihi (genelde Bölüm 16 veya belge başlığında). Format: GG.AA.YYYY (örn: '05.03.2025').",
+    # ═══ V3 (Sentez TMGD+İSG) alanları ═══
+    "uretici": "Kimyasal ÜRETİCİ firma adı — Bölüm 1'de 'Üretici Firma' veya 'İmalatçı' veya 'Manufacturer' başlığı altındaki firma. Tedarikçiden AYRI olarak belirtilmişse üretici, belirtilmemişse null dön (tedarikçi ile aynıysa null).",
+    "urun_kodu": "Ürün kodu / stok kodu — Bölüm 1'deki 'Ürün Kodu', 'Ürün No', 'Product Code', 'Article No', 'Katalog No' gibi etiketlerin değeri (örn: 'KAST015', 'A-1234'). Sadece kod, açıklama YAZMA.",
+    "kimyasalin_turu": "Kimyasalın türü / kategorisi — BÜYÜK HARFLE tek satır (örn: 'TAMPON ASİT', 'ENZİM', 'BOYA', 'PIGMENT', 'DİSPERSAN', 'YÜZEY AKTİF MADDE', 'KATALİZÖR', 'ÇÖZÜCÜ', 'DETERJAN', 'İNDİRGEN', 'YÜKSELTGEN'). Bölüm 1.2'deki kullanım açıklamasına ve Bölüm 3'teki bileşim tipine göre belirle.",
+    "msds_dili": "MSDS belgesinin yazıldığı dil — SADECE şunlardan biri: 'TÜRKÇE', 'İNGİLİZCE', 'ALMANCA', 'FRANSIZCA', 'İTALYANCA', 'İSPANYOLCA'. Bölüm başlıkları hangi dilde? ('Güvenlik Bilgi Formu' → TÜRKÇE, 'Safety Data Sheet' → İNGİLİZCE, 'Sicherheitsdatenblatt' → ALMANCA).",
+    "cas_listesi": "Karışım ürününün TÜM bileşenlerinin CAS numaraları liste olarak — Bölüm 3'teki bileşim tablosundaki her satırın CAS'i. Format: JSON list, örn: ['64-18-6', '2809-21-4']. Tek maddeli ürünlerde tek elemanlı liste. Bilinmiyorsa boş liste [].",
 }
 
 ENGINE_LABELS = {
@@ -504,10 +511,53 @@ def tamamla_eksik_alanlar(text: str, mevcut: dict, chain: list, models: dict, ke
     if not isinstance(sonuc, dict):
         return {}
 
-    # Güvenlik: sadece GERÇEKTEN boş olan alanları doldur, "null" dönenleri atla.
+    # ── Alan-tipine göre normalize ──
+    # Regex'te farklı tipler tutuluyor: cas_listesi bir LİSTE, diğerleri STRING.
+    # AI bazen liste beklenen alan için string döner ("64-18-6, 2809-21-4")
+    # veya string beklenen alan için int/liste. Aşağıdaki dönüşüm bunu düzeltir.
+    _GECERSIZ = ("null", "none", "belirsiz", "n/a", "na", "-", "")
+    _DIL_ESLESME = {
+        "TR": "TÜRKÇE", "TURKISH": "TÜRKÇE", "TURKCE": "TÜRKÇE",
+        "EN": "İNGİLİZCE", "ENGLISH": "İNGİLİZCE", "INGILIZCE": "İNGİLİZCE",
+        "DE": "ALMANCA", "GERMAN": "ALMANCA",
+        "FR": "FRANSIZCA", "FRENCH": "FRANSIZCA",
+        "IT": "İTALYANCA", "ITALIAN": "İTALYANCA", "ITALYANCA": "İTALYANCA",
+        "ES": "İSPANYOLCA", "SPANISH": "İSPANYOLCA", "ISPANYOLCA": "İSPANYOLCA",
+    }
+
     guncelleme = {}
     for k in eksikler:
         v = sonuc.get(k)
-        if isinstance(v, str) and v.strip() and v.strip().lower() not in ("null", "none", "belirsiz"):
+        if v is None:
+            continue
+
+        # cas_listesi: mutlaka liste olmalı
+        if k == "cas_listesi":
+            if isinstance(v, list):
+                temiz = [str(x).strip() for x in v if str(x).strip()]
+            elif isinstance(v, str):
+                temiz = [p.strip() for p in re.split(r"[,\n;/]+", v) if p.strip()]
+            else:
+                continue
+            # Sadece geçerli CAS formatı olanları kabul (000-00-0)
+            temiz = [c for c in temiz if re.fullmatch(r"\d{2,7}-\d{2}-\d", c)]
+            if temiz:
+                guncelleme[k] = temiz
+            continue
+
+        # msds_dili: enum normalize
+        if k == "msds_dili" and isinstance(v, str):
+            v_upper = v.strip().upper().replace("Ü", "U").replace("İ", "I")
+            for anahtar, deger in _DIL_ESLESME.items():
+                if anahtar in v_upper:
+                    guncelleme[k] = deger
+                    break
+            else:
+                if v.strip() and v.strip().lower() not in _GECERSIZ:
+                    guncelleme[k] = v.strip()
+            continue
+
+        # Diğer alanlar: string
+        if isinstance(v, str) and v.strip() and v.strip().lower() not in _GECERSIZ:
             guncelleme[k] = v.strip()
     return guncelleme
