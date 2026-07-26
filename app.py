@@ -1,4 +1,5 @@
 import io
+import math
 import os
 import re
 import tempfile
@@ -490,7 +491,49 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
 
     st.header("4) Çıkarılan Bilgileri Gözden Geçirin")
 
-    for fname, urun in st.session_state.urunler.items():
+    # ── Sayfalama ─────────────────────────────────────────────────────
+    # Büyük yüklemelerde (200-400+ PDF) HER rerun'da TÜM ürünler için
+    # expander + widget + tablo çizmek Streamlit'i çok yavaşlatıyor ve
+    # bellek/zaman aşımı hatalarına yol açıyordu. Tek seferde sadece
+    # seçili sayfadaki ürünler render edilir; diğerleri hiç çizilmez.
+    tum_urun_listesi = list(st.session_state.urunler.items())
+    toplam_urun = len(tum_urun_listesi)
+
+    if "review_sayfa" not in st.session_state:
+        st.session_state.review_sayfa = 0
+
+    if toplam_urun > 20:
+        col_boyut, col_bilgi = st.columns([1, 3])
+        with col_boyut:
+            sayfa_boyutu = st.selectbox(
+                "Sayfa başına ürün", [10, 25, 50, 100],
+                index=1, key="review_sayfa_boyutu",
+            )
+    else:
+        sayfa_boyutu = 100
+
+    toplam_sayfa = max(1, math.ceil(toplam_urun / sayfa_boyutu))
+    st.session_state.review_sayfa = min(st.session_state.review_sayfa, toplam_sayfa - 1)
+
+    if toplam_urun > sayfa_boyutu:
+        col_prev, col_bilgi2, col_next = st.columns([1, 2, 1])
+        with col_prev:
+            if st.button("⬅️ Önceki sayfa", disabled=st.session_state.review_sayfa <= 0):
+                st.session_state.review_sayfa -= 1
+                st.rerun()
+        with col_next:
+            if st.button("Sonraki sayfa ➡️", disabled=st.session_state.review_sayfa >= toplam_sayfa - 1):
+                st.session_state.review_sayfa += 1
+                st.rerun()
+        with col_bilgi2:
+            st.write(f"Sayfa {st.session_state.review_sayfa + 1} / {toplam_sayfa}  "
+                     f"(toplam {toplam_urun} ürün)")
+
+    baslangic = st.session_state.review_sayfa * sayfa_boyutu
+    bitis = baslangic + sayfa_boyutu
+    sayfa_urunleri = tum_urun_listesi[baslangic:bitis]
+
+    for fname, urun in sayfa_urunleri:
         info = urun["info"]
         if v3:
             # V3'te ADR kapsam durumu yerine V3 alanlarından ne bulundu özeti göster
@@ -564,19 +607,29 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
 
             if v3:
                 row_preview = build_inventory_row_v3(info, urun["kimyasal_adi"])
-                st.markdown("**Envantere yazılacak 22 sütun (10 manuel alan BOŞ):**")
-                # V3 önizlemesinde boş alanlar 'BOŞ (manuel doldurun)' olarak gösterilsin
+                # Boş (veri çekilemeyen / manuel) sütunlar önizleme tablosunda HİÇ
+                # gösterilmez -- sadece PDF'ten gerçekten çıkarılan değerler
+                # listelenir. Böylece 400 üründe onlarca "BOŞ" satırı gözü
+                # yormaz; hangi alanların manuel kalacağı üstteki başlıkta zaten
+                # belirtiliyor.
                 sunum = {}
                 for k, val in row_preview.items():
                     if k == "durum":
                         continue
                     if val is None or val == "":
-                        sunum[k] = ["⬜ BOŞ (Excel'de elle doldurun)"]
-                    else:
-                        # Multi-satır hücrelerini önizlemede birleştir
-                        gostergec = str(val).replace("\n", " • ")
-                        sunum[k] = [gostergec]
-                st.table(sunum)
+                        continue
+                    # Multi-satır hücrelerini önizlemede birleştir
+                    gostergec = str(val).replace("\n", " • ")
+                    sunum[k] = [gostergec]
+                bos_sayisi = len(row_preview) - 1 - len(sunum)  # -1: "durum" anahtarı hariç
+                st.markdown(
+                    f"**Envantere yazılacak 22 sütun** — {len(sunum)} tanesi PDF'ten "
+                    f"dolduruldu, {bos_sayisi} tanesi boş (manuel doldurulacak, aşağıda gösterilmiyor):"
+                )
+                if sunum:
+                    st.table(sunum)
+                else:
+                    st.info("Bu PDF'ten hiçbir otomatik alan çıkarılamadı — tüm sütunlar manuel doldurulacak.")
             elif v2:
                 row_preview = build_inventory_row_v2(info, urun["kimyasal_adi"], urun["ambalaj"])
                 if row_preview["durum"] == "ok":

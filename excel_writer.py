@@ -723,5 +723,32 @@ def add_products_v3(envanter_path: str, output_path: str, rows: list):
         eklenen.append(hedef_satir)
         son_satir = hedef_satir
 
+    _v3_bos_otomatik_sutunlari_gizle(ws, header_to_col)
+
     wb.save(output_path)
     return eklenen
+
+
+def _v3_bos_otomatik_sutunlari_gizle(ws, header_to_col):
+    """V3 sayfasındaki OTOMATİK (PDF'ten çıkarılan) sütunlardan, mevcut
+    tüm veri satırlarında hiçbir ürün için değer bulunamamış olanları
+    Excel'de gizli (hidden) sütun yapar -- satır/veri silinmez, sadece
+    görünürlük kapatılır (openpyxl column_dimensions.hidden). MANUEL
+    sütunlara (LOT, GATEWAY, Use Category/Type, DEĞERLENDİRME, GRS,
+    GOTS, DEPOLANDIĞI YER) asla dokunulmaz -- kullanıcı bunları Excel'de
+    elle dolduracağı için her zaman görünür kalmalı.
+    Halihazırda veri girmiş bir sütun varsa (daha önce gizlenmiş olsa
+    bile) burada tekrar görünür yapılır -- gizlilik durumu her export'ta
+    güncel veriye göre yeniden hesaplanır."""
+    from matcher import V3_OTOMATIK_SUTUNLAR
+
+    for baslik in V3_OTOMATIK_SUTUNLAR:
+        col = header_to_col.get(baslik)
+        if col is None:
+            continue
+        col_letter = get_column_letter(col)
+        herhangi_veri_var = any(
+            ws.cell(row=r, column=col).value not in (None, "")
+            for r in range(2, ws.max_row + 1)
+        )
+        ws.column_dimensions[col_letter].hidden = not herhangi_veri_var
