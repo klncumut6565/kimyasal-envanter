@@ -176,7 +176,7 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
         "Tedarikçi": adr_info.get("tedarikci"),
         "Fonksiyonu": adr_info.get("fonksiyon"),
         "Tehlikeli/ Tehlikesiz": adr_info.get("tehlikeli_tehlikesiz"),
-        "H KODLARI": adr_info.get("h_kodlari"),
+        "H KODLARI": adr_info.get("h_kodlari") or "-",
         "durum": "ok",  # ok | not_in_scope | manual_review
     }
     # "Tehlike Etiketi" sütunu görsel (piktogram) için ayrılmıştır, metin
@@ -415,14 +415,17 @@ def _cas_listesi_hucre_formati(cas_listesi):
 
 def _h_kodlari_hucre_formati(h_kodlari):
     """V3 için H kodlarını alt satırla ayrılmış olarak biçimlendirir
-    (mevcut format 'H314, H318' — V3 örneğinde 'H314\\nH318')."""
+    (mevcut format 'H314, H318' — V3 örneğinde 'H314\\nH318').
+    H kodu hiç bulunamadıysa "-" döner (H kodları kritik bir alan
+    olduğu için hücre asla boş bırakılmaz, kontrol edildiği açıkça
+    görülsün)."""
     if not h_kodlari:
-        return None
+        return "-"
     if isinstance(h_kodlari, list):
         parcalar = h_kodlari
     else:
         parcalar = [p.strip() for p in str(h_kodlari).split(",") if p.strip()]
-    return "\n".join(parcalar) if parcalar else None
+    return "\n".join(parcalar) if parcalar else "-"
 
 
 def _tehlike_etiketi_unicode_format(tehlike_etiketi):
@@ -499,7 +502,7 @@ def build_inventory_row_v2(adr_info: dict, kimyasal_adi: str, ambalaj_tank_dokme
         "MSDS/SDS TARİHİ": adr_info.get("revize_tarihi"),
         "Sistem_Kodu/Tedarikçi Firma": adr_info.get("tedarikci"),
         "Cas_No": cas_deger,
-        "H KODLARI": adr_info.get("h_kodlari"),
+        "H KODLARI": adr_info.get("h_kodlari") or "-",
         "Fonksiyonu": adr_info.get("fonksiyon"),
         "Tehlikeli/Tehlikesiz": adr_info.get("tehlikeli_tehlikesiz"),
         "durum": "ok",
