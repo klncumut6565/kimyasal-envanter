@@ -455,6 +455,13 @@ def extract_kimyasalin_turu(text: str):
     kullanım açıklamasıdır; tür daha kısa/kategorik olmalı. Yaygın
     kategori sözcüklerini regex ile ara, yoksa None."""
     bolum1 = find_section_text(text, 1, 2) or text[:3000]
+    # KRİTİK: Türkçe MSDS'lerin standart Bölüm 1 başlığı "...Şirketin /
+    # Dağıtıcının Kimliği" şeklindedir -- bu başlıktaki "Dağıtıcının" kelimesi
+    # "dispersan" anlamındaki "dağıtıcı" deseniyle eşleşiyor ve düzeltilmeden
+    # önce HEMEN HEMEN HER Türkçe MSDS (argon gazından pigmente kadar) yanlış
+    # şekilde "DİSPERSAN" olarak etiketleniyordu. Başlık satırını (ilk
+    # "KİMLİĞİ" kelimesine kadar olan kısmı) örüntü aramasından önce kırp.
+    bolum1_arama = re.sub(r"(?is)^.{0,150}?kimliği\s*", "", bolum1, count=1)
     # Yaygın Türkçe/İngilizce kimyasal tür anahtar kelimeleri (tekstil ağırlıklı)
     turler = [
         (r"(?i)tampon\s+asit", "TAMPON ASİT"),
@@ -475,11 +482,11 @@ def extract_kimyasalin_turu(text: str):
         (r"(?i)köpük\s+kesici|antifoam|defoamer", "KÖPÜK KESİCİ"),
         (r"(?i)yüzey\s+aktif|surfactant", "YÜZEY AKTİF"),
         (r"(?i)katalizör|catalyst", "KATALİZÖR"),
-        (r"(?i)koruyucu|preservative|biocide|biyosit", "KORUYUCU/BİYOSİT"),
+        (r"(?i)koruyucu(?!\s+gaz\b)|preservative|biocide|biyosit", "KORUYUCU/BİYOSİT"),
         (r"(?i)şelatlay[ıi]c[ıi]|chelating\s+agent", "ŞELATLAYICI"),
     ]
     for desen, etiket in turler:
-        if re.search(desen, bolum1):
+        if re.search(desen, bolum1_arama):
             return etiket
     return None
 
