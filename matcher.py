@@ -383,6 +383,21 @@ V3_OTOMATIK_SUTUNLAR = {
     "TEHLİKE SINIFI", "TEHLİKE ETİKETİ", "FONKSIONU",
 }
 
+# V3 manuel sütunlar — Excel'de ve uygulama preview'da gizlenecek
+# Veri SILINMEZ, sadece görünürlük kapalı (hidden column)
+V3_MANUEL_SUTUNLAR = {
+    "GELEN LOT BİLGİSİ",
+    "STOK LOT BİLGİSİ",
+    "GATEWAY'DE SEVİYE KAYDI",
+    "Use Category",
+    "Use Type",
+    "DEĞERLENDİRME GÜNCEL",
+    "GATEWAY DEĞERLENDİRME SONUCU",
+    "GRS STANDARDI",
+    "GOTS VERSION 7.0",
+    "DEPOLANDIĞI YER",
+}
+
 
 def _cas_listesi_hucre_formati(cas_listesi):
     """V3 için Multi-CAS hücre değeri. Excel'de wrap-text ile alt satır

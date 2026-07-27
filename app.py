@@ -641,14 +641,16 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
 
             if v3:
                 row_preview = build_inventory_row_v3(info, urun["kimyasal_adi"])
-                # Boş (veri çekilemeyen / manuel) sütunlar önizleme tablosunda HİÇ
-                # gösterilmez -- sadece PDF'ten gerçekten çıkarılan değerler
-                # listelenir. Böylece 400 üründe onlarca "BOŞ" satırı gözü
-                # yormaz; hangi alanların manuel kalacağı üstteki başlıkta zaten
-                # belirtiliyor.
+                # Boş (veri çekilemeyen / manuel) sütunlar ve MANUEL sütunları
+                # önizleme tablosunda HİÇ gösterilmez -- sadece PDF'ten
+                # gerçekten çıkarılan değerler listelenir.
+                from matcher import V3_MANUEL_SUTUNLAR
                 sunum = {}
                 for k, val in row_preview.items():
                     if k == "durum":
+                        continue
+                    if k in V3_MANUEL_SUTUNLAR:
+                        # Manuel sütunları preview'da gösterme (Excel'de hidden olacak)
                         continue
                     if val is None or val == "":
                         continue
@@ -657,7 +659,7 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
                     sunum[k] = [gostergec]
                 bos_sayisi = len(row_preview) - 1 - len(sunum)  # -1: "durum" anahtarı hariç
                 st.markdown(
-                    f"**Envantere yazılacak 22 sütun** — {len(sunum)} tanesi PDF'ten "
+                    f"**Envantere yazılacak 12 otomatik sütun** — {len(sunum)} tanesi PDF'ten "
                     f"dolduruldu, {bos_sayisi} tanesi boş (manuel doldurulacak, aşağıda gösterilmiyor):"
                 )
                 if sunum:

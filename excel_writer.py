@@ -724,6 +724,7 @@ def add_products_v3(envanter_path: str, output_path: str, rows: list):
         son_satir = hedef_satir
 
     _v3_bos_otomatik_sutunlari_gizle(ws, header_to_col)
+    _v3_manuel_sutunlari_hep_gizle(ws, header_to_col)
 
     wb.save(output_path)
     return eklenen
@@ -733,10 +734,7 @@ def _v3_bos_otomatik_sutunlari_gizle(ws, header_to_col):
     """V3 sayfasındaki OTOMATİK (PDF'ten çıkarılan) sütunlardan, mevcut
     tüm veri satırlarında hiçbir ürün için değer bulunamamış olanları
     Excel'de gizli (hidden) sütun yapar -- satır/veri silinmez, sadece
-    görünürlük kapatılır (openpyxl column_dimensions.hidden). MANUEL
-    sütunlara (LOT, GATEWAY, Use Category/Type, DEĞERLENDİRME, GRS,
-    GOTS, DEPOLANDIĞI YER) asla dokunulmaz -- kullanıcı bunları Excel'de
-    elle dolduracağı için her zaman görünür kalmalı.
+    görünürlük kapatılır (openpyxl column_dimensions.hidden). 
     Halihazırda veri girmiş bir sütun varsa (daha önce gizlenmiş olsa
     bile) burada tekrar görünür yapılır -- gizlilik durumu her export'ta
     güncel veriye göre yeniden hesaplanır."""
@@ -752,3 +750,23 @@ def _v3_bos_otomatik_sutunlari_gizle(ws, header_to_col):
             for r in range(2, ws.max_row + 1)
         )
         ws.column_dimensions[col_letter].hidden = not herhangi_veri_var
+
+
+def _v3_manuel_sutunlari_hep_gizle(ws, header_to_col):
+    """V3 sayfasındaki MANUEL sütunları (elle doldurulacak olanları) 
+    HER ZAMAN gizli (hidden) yapar. Bunlar:
+    - GELEN LOT BİLGİSİ, STOK LOT BİLGİSİ
+    - GATEWAY'DE SEVİYE KAYDI, Use Category, Use Type
+    - DEĞERLENDİRME GÜNCEL, GATEWAY DEĞERLENDİRME SONUCU
+    - GRS STANDARDI, GOTS VERSION 7.0, DEPOLANDIĞI YER
+    
+    Veri SILINMEZ, sadece Excel'de görünürlük kapatılır. Kullanıcı
+    ihtiyaç duyarsa Excel'de sütunları açabilir (right-click → Unhide)."""
+    from matcher import V3_MANUEL_SUTUNLAR
+
+    for baslik in V3_MANUEL_SUTUNLAR:
+        col = header_to_col.get(baslik)
+        if col is None:
+            continue
+        col_letter = get_column_letter(col)
+        ws.column_dimensions[col_letter].hidden = True
