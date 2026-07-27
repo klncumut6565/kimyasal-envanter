@@ -597,13 +597,32 @@ def extract_uyari_kelimesi(text: str):
 
 
 def extract_tehlikeli_tehlikesiz(text: str, h_kodlari):
-    """H kodu bulunduysa 'Tehlikeli', Bölüm 2 açıkça sınıflandırılmamış
-    diyorsa 'Tehlikesiz' döner; aksi halde belirsizdir (None)."""
+    """H kodu bulunduysa 'Tehlikeli', Bölüm 2 (Zararlılık Tanımlaması) açıkça
+    sınıflandırılmamış/tehlikesiz diyorsa 'Tehlikesiz' döner; aksi halde
+    belirsizdir (None).
+
+    MSDS'lerde "tehlikesiz" ifadesi çok farklı biçimlerde geçebilir, bu
+    yüzden tek bir sabit cümle yerine birkaç yaygın varyasyon kontrol
+    edilir: "zararlı/tehlikeli olarak sınıflandırılmamıştır", tek başına
+    "sınıflandırılmamıştır", "sınıflandırma kriterlerini karşılamamaktadır",
+    "tehlikeli/zararlı değildir" gibi."""
     if h_kodlari:
         return "Tehlikeli"
     bolum2 = find_section_text(text, 2, 3) or text
-    if re.search(r"zararl[ıi]\s+olarak\s+s[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r", bolum2, re.IGNORECASE):
-        return "Tehlikesiz"
+    tehlikesiz_kaliplari = [
+        # "zararlı/tehlikeli (madde/karışım) (olarak) sınıflandırılmamıştır"
+        r"(zararl[ıi]|tehlikeli)\s+(madde\s+veya\s+kar[ıi][şs][ıi]m[ıi]?\s+|madde\s+|kar[ıi][şs][ıi]m\s+)?(olarak\s+)?s[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r",
+        # Tek başına "sınıflandırılmamıştır" (Bölüm 2 sınıflandırma başlığı altında)
+        r"\bs[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r\b",
+        # "sınıflandırma kriterlerini karşılamamaktadır/karşılamıyor"
+        r"s[ıi]n[ıi]fland[ıi]rma\s+kriterlerini\s+kar[şs][ıi]lam[ıi](yor|amaktad[ıi]r)",
+        r"kriterlerini\s+kar[şs][ıi]lamamaktad[ıi]r",
+        # "tehlikeli/zararlı değildir"
+        r"(tehlikeli|zararl[ıi])\s+de[ğg]ildir",
+    ]
+    for kalip in tehlikesiz_kaliplari:
+        if re.search(kalip, bolum2, re.IGNORECASE):
+            return "Tehlikesiz"
     return None
 
 
