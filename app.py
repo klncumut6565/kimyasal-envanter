@@ -122,14 +122,48 @@ def render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix, v
         st.session_state.sonuc_mesajlari = []
 
         if v3:
-            try:
-                added = add_products_v3(envanter_path, out_path, rows)
+            # KRITIK FIX: V3 "yeni" modunda, her dışa aktarış için TAMAMEN YENİ şablon
+            # oluşturmalıyız. Sorun: Firma parametreleri değişmezse şablon yeniden
+            # oluşturulmaz. Sonra PDF export sonrası, şablon dosyası (sentez_envanter.xlsx)
+            # veri içerir. İkinci PDF batch'i upload edilip export yapılırken bu
+            # veri-dolu şablon kullanılır, "mevcut veri üzerine yaz" davranışı görülür.
+            # Çözüm: Dışa aktarmadan ÖNCESİ, firma config'ini okumuş YENİ şablon oluştur.
+            if not envanter_path or not os.path.exists(envanter_path):
+                st.error("❌ V3 şablonu bulunamadı. Sidebar'da firma adını girin ve yeniden deneyin.")
                 st.session_state.sonuc_mesajlari.append(
-                    ("success", f"✅ {len(added)} ürün Sentez TMGD+İSG envanterine eklendi. "
-                                f"Boş bırakılan hücreler (LOT, GATEWAY, Use Cat/Type, "
-                                f"DEĞERLENDİRME, GRS, GOTS, DEPO) Excel'de elle doldurulmalıdır."))
-            except ValueError as e:
-                st.session_state.sonuc_mesajlari.append(("error", f"❌ {e}"))
+                    ("error", "V3 şablonu hazırlama başarısız."))
+            else:
+                # Sidebar'da kaydedilen firma bilgilerini oku ve TAZE şablon oluştur
+                # (PDF export işlemi sırasında temiz başlayız)
+                fresh_template = os.path.join(TMP, f"sentez_envanter_fresh_{int(time.time() * 1000)}.xlsx")
+                try:
+                    # Session state'ten sidebar bilgilerini oku (eğer mevcutsa)
+                    hazirlayan = st.session_state.get("hazirlayan_adi_v3", "").strip() or None
+                    onaylayan = st.session_state.get("onaylayan_adi_v3", "").strip() or None
+                    create_new_sentez_envanter(
+                        fresh_template,
+                        firma_adi=firma_adi.strip(),
+                        logo_path=None,  # Logo yeniden yüklemesi gerekmez (şablon için tekrar gerekli değil)
+                        hazirlayan_adi=hazirlayan,
+                        onaylayan_adi=onaylayan
+                    )
+                    added = add_products_v3(fresh_template, out_path, rows)
+                    st.session_state.sonuc_mesajlari.append(
+                        ("success", f"✅ {len(added)} ürün Sentez TMGD+İSG envanterine eklendi. "
+                                    f"Boş bırakılan hücreler (LOT, GATEWAY, Use Cat/Type, "
+                                    f"DEĞERLENDİRME, GRS, GOTS, DEPO) Excel'de elle doldurulmalıdır."))
+                except ValueError as e:
+                    st.session_state.sonuc_mesajlari.append(("error", f"❌ {e}"))
+                except Exception as e:
+                    st.session_state.sonuc_mesajlari.append(
+                        ("error", f"❌ Beklenmeyen hata: {str(e)[:200]}"))
+                finally:
+                    # Geçici şablonu temizle
+                    if fresh_template and os.path.exists(fresh_template):
+                        try:
+                            os.remove(fresh_template)
+                        except:
+                            pass
         elif v2:
             try:
                 sonuc = fill_or_append_v2(envanter_path, out_path, rows,
