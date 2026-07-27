@@ -709,16 +709,8 @@ def add_products_v3(envanter_path: str, output_path: str, rows: list):
             cell.alignment = data_style["align"]
             cell.border = data_style["border"]
 
-        # Multi-satırlı hücrelerin satır yüksekliğini otomatik ayarla:
-        # CAS listesi ve H kodları alt satır (\n) içerebilir. En uzun
-        # satır kaç newline içeriyorsa +1 satır yüksekliğine göre ayarla.
-        max_satir = 1
-        for deger in row_dict.values():
-            if isinstance(deger, str) and "\n" in deger:
-                satir_sayisi = deger.count("\n") + 1
-                if satir_sayisi > max_satir:
-                    max_satir = satir_sayisi
-        ws.row_dimensions[hedef_satir].height = max(18, 15 * max_satir)
+        # Veri yazılan her satırın yüksekliği sabit 90 olarak ayarlanır.
+        ws.row_dimensions[hedef_satir].height = 90
 
         eklenen.append(hedef_satir)
         son_satir = hedef_satir
