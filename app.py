@@ -11,7 +11,7 @@ from openpyxl import load_workbook
 from extractor import extract_adr_info, clean_product_name
 from ai_destek import ENGINE_LABELS, FAILOVER_ORDER, build_failover_chain
 from matcher import (build_inventory_row, build_inventory_row_v2, build_inventory_row_v3,
-                       NOT_IN_SCOPE_TEXT, MANUAL_REVIEW_TEXT, V3_SUTUNLAR)
+                       NOT_IN_SCOPE_TEXT, MANUAL_REVIEW_TEXT, V3_SUTUNLAR, V3_MANUEL_SUTUNLAR)
 from excel_writer import (add_products, fill_or_append_v2, create_new_envanter,
                             create_new_sentez_envanter, add_products_v3,
                             find_column, SHEET_NAME, HEADER_ROW)
@@ -644,7 +644,6 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
                 # Boş (veri çekilemeyen / manuel) sütunlar ve MANUEL sütunları
                 # önizleme tablosunda HİÇ gösterilmez -- sadece PDF'ten
                 # gerçekten çıkarılan değerler listelenir.
-                from matcher import V3_MANUEL_SUTUNLAR
                 sunum = {}
                 for k, val in row_preview.items():
                     if k == "durum":
