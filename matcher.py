@@ -168,7 +168,7 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
         "AMBALAJLI/TANK/DÖKME": ambalaj_tank_dokme,
         "MSDS/SDS TARİHİ": adr_info.get("revize_tarihi"),
         "ADR-IMDG-IATA": "ADR",  # Bu sütun her zaman sabit "ADR" yazar (durum ne olursa olsun)
-        "Cas_No": adr_info.get("cas_no"),
+        "Cas_No": adr_info.get("cas_no") or "-",
         "Tedarikçi": adr_info.get("tedarikci"),
         "Fonksiyonu": adr_info.get("fonksiyon"),
         "Tehlikeli/ Tehlikesiz": adr_info.get("tehlikeli_tehlikesiz"),
@@ -442,8 +442,9 @@ def build_inventory_row_v3(adr_info: dict, kimyasal_adi: str):
     ADR bilgileri (UN No, Sınıf, PG) bu şemada TEHLİKE SINIFI'na özet olarak
     yansır (Tehlikeli/Tehlikesiz). Tam ADR detayı gerekiyorsa Versiyon 1
     kullanılmalıdır — V3 İSG odaklı bir birleşik formattır."""
-    # Multi-CAS öncelikli; yoksa tek CAS'e düş
-    cas_deger = _cas_listesi_hucre_formati(adr_info.get("cas_listesi")) or adr_info.get("cas_no")
+    # Multi-CAS öncelikli; yoksa tek CAS'e düş; hiçbiri yoksa "-" yaz
+    # (CAS No kritik bir alan olduğu için hücre asla boş bırakılmaz).
+    cas_deger = _cas_listesi_hucre_formati(adr_info.get("cas_listesi")) or adr_info.get("cas_no") or "-"
     row = {
         "Kimyasal Üretici Firma Adı":       adr_info.get("uretici") or adr_info.get("tedarikci"),
         "Kimyasal Tedarikçi Firma Adı":     adr_info.get("tedarikci"),
@@ -492,7 +493,7 @@ def build_inventory_row_v2(adr_info: dict, kimyasal_adi: str, ambalaj_tank_dokme
         "Kimyasal Adı": kimyasal_adi,
         "MSDS/SDS TARİHİ": adr_info.get("revize_tarihi"),
         "Sistem_Kodu/Tedarikçi Firma": adr_info.get("tedarikci"),
-        "Cas_No": adr_info.get("cas_no"),
+        "Cas_No": adr_info.get("cas_no") or "-",
         "H KODLARI": adr_info.get("h_kodlari"),
         "Fonksiyonu": adr_info.get("fonksiyon"),
         "Tehlikeli/Tehlikesiz": adr_info.get("tehlikeli_tehlikesiz"),
