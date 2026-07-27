@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="32" height="32">
+  <!-- Sarı arka plan (dikkat/uyarı) -->
+  <rect width="100" height="100" fill="#FFB703" rx="4"/>
+  <!-- Siyah uyarı simgesi (!) -->
+  <text x="50" y="70" font-size="64" font-weight="bold" fill="black" text-anchor="middle" font-family="Arial, sans-serif">!</text>
+  <!-- Başlık -->
+  <text x="50" y="95" font-size="10" fill="black" text-anchor="middle" font-family="Arial, sans-serif" font-weight="bold">DİKKAT</text>
+</svg>

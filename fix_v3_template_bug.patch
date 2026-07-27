@@ -1,0 +1,22 @@
+--- a/app.py
++++ b/app.py
+@@ -255,12 +255,20 @@ with st.sidebar:
+                 if st.session_state.get("v3_envanter_anahtar") != son_anahtar_v3:
+                     envanter_path = os.path.join(TMP, "sentez_envanter.xlsx")
+                     create_new_sentez_envanter(envanter_path, firma_adi,
+                                                 firma_logo_path_v3,
+                                                 hazirlayan_adi_v3, onaylayan_adi_v3)
+                     st.session_state.v3_envanter_anahtar = son_anahtar_v3
+                     st.session_state.v3_envanter_path = envanter_path
+-                envanter_path = st.session_state.v3_envanter_path
++
++                # PDF yükledikten sonra aynı firma adıyla tekrar dışa aktarırken,
++                # şablon yeniden oluşturulmamışsa (firma adı değişmemişse), yine de
++                # TAZE bir şablon gerekli. Aksi takdirde, önceki export'ın verileri
++                # içeren dosya input olur ve yeni ürünler mevcut veriye EKLENİR
++                # (istenen davranış: her dışa aktarış için taze şablon).
++                # Çözüm: Her zaman bir taze kopyasını kullan.
++                envanter_path = st.session_state.v3_envanter_path
+                 st.success("Yeni Sentez TMGD+İSG envanteri hazır ✓")
+             else:
+                 st.info("Devam etmek için firma adını girin.")

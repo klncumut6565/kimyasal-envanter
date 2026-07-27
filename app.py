@@ -664,6 +664,26 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
                 )
                 if sunum:
                     st.table(sunum)
+                    
+                    # Tehlike Etiketi özel gösterimi (SVG resim)
+                    if "TEHLİKE ETİKETİ" in row_preview and row_preview["TEHLİKE ETİKETİ"]:
+                        etiket_text = str(row_preview["TEHLİKE ETİKETİ"]).strip().lower()
+                        if "tehlike" in etiket_text:
+                            etiket_resim = "data/etiketler/tehlike.svg"
+                            etiket_baslik = "🔴 Tehlike Etiketi"
+                        elif "dikkat" in etiket_text or "warning" in etiket_text:
+                            etiket_resim = "data/etiketler/dikkat.svg"
+                            etiket_baslik = "🟡 Dikkat Etiketi"
+                        else:
+                            etiket_resim = None
+                        
+                        if etiket_resim and os.path.exists(etiket_resim):
+                            st.markdown(f"**{etiket_baslik}:**")
+                            col1, col2 = st.columns([2, 3])
+                            with col1:
+                                st.image(etiket_resim, width=80)
+                            with col2:
+                                st.write(f"*{row_preview['TEHLİKE ETİKETİ']}*")
                 else:
                     st.info("Bu PDF'ten hiçbir otomatik alan çıkarılamadı — tüm sütunlar manuel doldurulacak.")
             elif v2:

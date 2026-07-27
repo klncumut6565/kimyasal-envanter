@@ -420,6 +420,20 @@ def _h_kodlari_hucre_formati(h_kodlari):
     return "\n".join(parcalar) if parcalar else None
 
 
+def _tehlike_etiketi_unicode_format(tehlike_etiketi):
+    """Tehlike Etiketi'ni Unicode simgesi + metin formatında döner.
+    Excel'de görsel gösterim için: "⚠️ Tehlike" veya "⚠️ Dikkat"
+    Streamlit preview'da: SVG img tag kullanılacak (ayrı olarak)."""
+    if not tehlike_etiketi:
+        return None
+    tehlike_temiz = str(tehlike_etiketi).strip().lower()
+    if "tehlike" in tehlike_temiz or "danger" in tehlike_temiz:
+        return "⚠️ Tehlike"  # Unicode warning sign + metin
+    elif "dikkat" in tehlike_temiz or "warning" in tehlike_temiz or "attention" in tehlike_temiz:
+        return "⚠️ Dikkat"   # Unicode warning sign + metin
+    return tehlike_etiketi  # Bilinen değil, olduğu gibi dön
+
+
 def build_inventory_row_v3(adr_info: dict, kimyasal_adi: str):
     """Sentez TMGD+İSG (Versiyon 3) satır sözlüğü üretir. 22 sütun; 12'si
     PDF'ten otomatik, 10'u manuel giriş için BOŞ bırakılır.
@@ -445,7 +459,7 @@ def build_inventory_row_v3(adr_info: dict, kimyasal_adi: str):
         "MSDS/TDS DİLİ":                     adr_info.get("msds_dili"),
         "H KODLARI":                         _h_kodlari_hucre_formati(adr_info.get("h_kodlari")),
         "TEHLİKE SINIFI":                    adr_info.get("tehlikeli_tehlikesiz"),
-        "TEHLİKE ETİKETİ":                   adr_info.get("tehlike_etiketi"),
+        "TEHLİKE ETİKETİ":                   _tehlike_etiketi_unicode_format(adr_info.get("tehlike_etiketi")),
         "DEĞERLENDİRME GÜNCEL":              None,  # manuel
         "GATEWAY DEĞERLENDİRME SONUCU":      None,  # manuel
         "GRS STANDARDI":                     None,  # manuel
