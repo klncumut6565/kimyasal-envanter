@@ -193,10 +193,16 @@ def extract_revize_tarihi(text: str):
 
 def extract_suggested_name(text: str):
     # Çeşitli MSDS formatlarında "Ürün ismi" / "Ürün adı" / "Ticari ismi" /
-    # "Ticari isim" / "Ticari adı" / "Ticari Adı" etiketleri kullanılabiliyor
+    # "Ticari isim" / "Ticari adı" / "Ticari Adı" etiketleri kullanılabiliyor.
+    # KRİTİK: Türkçede "isim" kelimesi ek aldığında ünsüz düşmesine uğrar
+    # ("isim" + "i" -> "ismi", "isim" + "ini" -> "ismini") -- yani çekimli
+    # hâli "isim" kökünü ÖNEK olarak İÇERMEZ ("ismi" 'isim' ile başlamaz).
+    # Eski "isim\w*" deseni bu yüzden en yaygın kullanım olan "Ticari ismi :"
+    # ile HİÇ eşleşmiyordu ve ürün adı çoğu zaman boş dönüyordu. "is(?:im\b|mi\w*)"
+    # hem temel hem çekimli hâlleri kapsar.
     patterns = [
-        r"Ürün ismi\s+(.+)",
-        r"Ticari isim\w*\s*:?\s*(.+)",
+        r"Ürün\s+is(?:im\b|mi\w*)\s*:?\s*(.+)",
+        r"Ticari\s+is(?:im\b|mi\w*)\s*:?\s*(.+)",
         r"Ticari ad[ıi]\s*:?\s*(.+)",
         r"Ürün ad[ıi]\s*:?\s*(.+)",
         r"Product\s*Name\s*:?\s*(.+)",  # İngilizce MSDS
@@ -210,6 +216,7 @@ def extract_suggested_name(text: str):
         if m:
             name = m.group(1).strip()
             name = re.sub(r"™|®", "", name).strip()
+            name = _pipe_ilk_hucre(name)
             if name:
                 return name
     return None
@@ -236,6 +243,23 @@ def find_section_text(text: str, section_no: int, next_section_no: int = None):
 _COMPANY_SUFFIX = r"(A\.?Ş\.?|Ltd\.?\s*Şti\.?|GmbH|Sanayi|San\.|Ticaret|Tic\.|Kimya|Inc\.|Corp\.|S\.A\.)"
 
 
+def _pipe_ilk_hucre(deger: str) -> str:
+    """Değer bir markdown '|' tablo satırı ise ('| CHT Germany GmbH |
+    CHT Switzerland AG |' gibi), ilk dolu hücreyi döner. '|' içermeyen
+    normal değerlerde hiçbir şey değişmez. Bazı PDF->metin dönüştürme
+    araçları tablo hücrelerini '|' ile ayırdığından, etiketten sonra
+    gelen ilk hücreyi (genelde asıl firma adı) tek başına almak,
+    hücrenin tamamının ham '| A | B |' halinde yazılmasından daha
+    doğrudur."""
+    if not deger or "|" not in deger:
+        return deger
+    for hucre in deger.split("|"):
+        hucre = hucre.strip(" -:")
+        if hucre:
+            return hucre
+    return deger
+
+
 def extract_tedarikci(text: str):
     """Bölüm 1.3'ten tedarikçi/üretici firma adını çıkarır."""
     bolum1 = find_section_text(text, 1, 2) or text[:3000]
@@ -246,45 +270,45 @@ def extract_tedarikci(text: str):
     # Bilgileri") yanlışlıkla firma adı diye yakalayabilir.
     m = re.search(r"Firma\s+Ad[ıi]\s*:?\s*\n?\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
-        return m.group(1).strip()
+        return _pipe_ilk_hucre(m.group(1).strip())
     # "Şirket Unvanı   ERCA GROUP..." sütun formatı — etiket + büyük boşluk + değer
     m = re.search(r"[Şş]irket\s+Unvan[ıi]\s{2,}([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
-        return m.group(1).strip()
+        return _pipe_ilk_hucre(m.group(1).strip())
     # "Tedarikçi" etiketi -- yalnızca kelime sınırında bittiğinde
     # ("Tedarikçi :" veya "Tedarikçi\n") eşleştiriyoruz; "Tedarikçisinin"
     # gibi bir çekim ekiyle devam ediyorsa bu, başlığın bir parçasıdır,
     # değer etiketi değildir.
-    m = re.search(r"Tedarikçi\b(?!sinin|nin|si)\s*\n?\s*:?\s*([^\n]{3,90})", bolum1)
+    m = re.search(r"Tedarikçi\b(?!sinin|nin|si)\s*(?:Firma\w*)?\s*\n?\s*:?\s*([^\n]{3,90})", bolum1)
     if m and m.group(1).strip():
-        return m.group(1).strip()
+        return _pipe_ilk_hucre(m.group(1).strip())
     m = re.search(r"Produc\w*\s+Company\s*\n?\s*([^\n]{3,90})", bolum1, re.IGNORECASE)  # İngilizce MSDS
     if m and m.group(1).strip():
-        return m.group(1).strip()
+        return _pipe_ilk_hucre(m.group(1).strip())
     m = re.search(r"1\.3[.\s][^\n]*\n+((?:[^\n]+\n+){0,4})", bolum1)
     if m:
         for line in m.group(1).split("\n"):
             line = line.strip()
             if line and re.search(_COMPANY_SUFFIX, line, re.IGNORECASE):
-                return line
+                return _pipe_ilk_hucre(line)
     # "1.3.1 ... tedarikçi bilgiler ; Firma Adı" — değer etiketle aynı satırda
     m = re.search(r"1\.3\.1[^\n]*tedarik\w*\s+bilgi\w*\s*;\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
-        return m.group(1).strip()
+        return _pipe_ilk_hucre(m.group(1).strip())
     # "Mümessil Firma\nFirma Adı" — Türkiye'deki yaygın format (Jay/Tekay şablonu)
     # Mümessil = yerel tedarikçi; üretici firma değil, biz onu alıyoruz.
     for aralik in [bolum1, text[:4000]]:
         m = re.search(r"Mümessil\s+Firma\s*\n\s*([^\n]{3,90})", aralik, re.IGNORECASE)
         if m and m.group(1).strip():
-            return m.group(1).strip()
+            return _pipe_ilk_hucre(m.group(1).strip())
     # "Üretici   HANGZHOU..." sütun formatı (MGVB/eski şablon — büyük boşluklu)
     for aralik in [bolum1, text[:2000]]:
         m = re.search(r"Üretici\s{2,}([^\n]{3,90})", aralik, re.IGNORECASE)
         if m and m.group(1).strip():
-            return m.group(1).strip()
+            return _pipe_ilk_hucre(m.group(1).strip())
         m = re.search(r"Üretici\s+Firma\s*\n\s*([^\n]{3,90})", aralik, re.IGNORECASE)
         if m and m.group(1).strip():
-            return m.group(1).strip()
+            return _pipe_ilk_hucre(m.group(1).strip())
     return None
 
 
@@ -311,6 +335,13 @@ def extract_fonksiyon(text: str):
         r"(?m)^\s*" + _esnek_desen("Kullanım alanı") + r"\b\s*:\s*([^\n]{3,80})",
         r"(?m)^\s*Kullanim\s*:\s*\n?\s*([^\n]{3,80})",
         r"(?m)^\s*Relevant\s+identified\s+uses\s*:?\s*([^\n]{3,80})",  # İngilizce MSDS
+        # "...belirlenmiş kullanımları ve tavsiye edilmeyen kullanımları
+        # Madde/Karışımın kullanımı : Tekstil ..." -- başlık ve değer AYNI
+        # satırda (CHT şablonu). Bu deseni, aşağıdaki genel/greedy son
+        # desenden ÖNCE deniyoruz -- yoksa o greedy desen değeri "satırın
+        # devamı" sayıp yutuyor, sonra YANLIŞLIKLA bir sonraki satırı
+        # (örn. "1.3 Güvenlik bilgi formu...") fonksiyon diye yakalıyordu.
+        r"(?i)Madde\s*/\s*" + _esnek_desen("Karışımın") + r"\s+" + _esnek_desen("kullanımı") + r"\s*:\s*([^\n]{3,200})",
         # HABAŞ tarzı şablon: başlık satırın ortasında geçiyor ("1.2.
         # Madde veya Karışımın Belirlenmiş Kullanımları ve Tavsiye
         # Edilmeyen Kullanımları") ve değer doğrudan ALT satırda, ayrı
@@ -419,9 +450,13 @@ def extract_uretici(text: str):
         m = re.search(p, bolum1)
         if m and m.group(1).strip():
             deger = m.group(1).strip()
-            # "Tedarikçi" başlığından değere sıçramış olmasın kontrolü
-            if not re.match(r"(?i)Tedarikçi|Firma\s+Ad|Adres", deger):
-                return deger
+            # "Tedarikçi" başlığından değere sıçramış olmasın kontrolü.
+            # "Üretici/Tedarikçi" gibi BİRLEŞİK başlıklarda (ayrı üretici
+            # bilgisi olmayan CHT tarzı şablonlar) "Üretici" sonrası
+            # doğrudan "/Tedarikçi" veya "/Tedarikçisinin detayları" gelir
+            # -- bu bir değer değil, başlığın devamıdır.
+            if not re.match(r"(?i)/?\s*(Tedarikçi|Supplier)|Firma\s+Ad|Adres", deger):
+                return _pipe_ilk_hucre(deger)
     return None
 
 
@@ -541,15 +576,15 @@ def extract_uyari_kelimesi(text: str):
     bolum2 = find_section_text(text, 2, 3) or text
     m = re.search(r"Uyar[ıi]\s+[Kk]elimesi\s*:?\s*\n?\s*([^\n]{2,30})", bolum2)
     if m and m.group(1).strip():
-        return m.group(1).strip()
+        return _pipe_ilk_hucre(m.group(1).strip())
     m = re.search(r"İşaret\s+[Kk]elime\w*\s*:?\s*\n?\s*([^\n]{2,30})", bolum2)
     if m and m.group(1).strip():
-        return m.group(1).strip()
+        return _pipe_ilk_hucre(m.group(1).strip())
     # "İşaret Sözcüğü :" etiketi (örn. HABAŞ şablonu) -- "Kelime" yerine
     # eş anlamlı "Sözcük" kelimesi kullanılıyor.
     m = re.search(r"İşaret\s+[Ss]özc[üu][ğg][üu]\s*:?\s*\n?\s*([^\n]{2,30})", bolum2)
     if m and m.group(1).strip():
-        return m.group(1).strip()
+        return _pipe_ilk_hucre(m.group(1).strip())
     # BASF formatı: "Sinyal kelime:\nTehlike" — etiket alt satırda
     m = re.search(r"Sinyal\s+kelime\s*:?\s*\n?\s*(Tehlike|Dikkat)\b", bolum2, re.IGNORECASE)
     if m:
