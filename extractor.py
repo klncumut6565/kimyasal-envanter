@@ -279,7 +279,7 @@ def extract_tedarikci(text: str):
     # ("Tedarikçi :" veya "Tedarikçi\n") eşleştiriyoruz; "Tedarikçisinin"
     # gibi bir çekim ekiyle devam ediyorsa bu, başlığın bir parçasıdır,
     # değer etiketi değildir.
-    m = re.search(r"Tedarikçi\b(?!sinin|nin|si)\s*(?:Firma\w*)?\s*\n?\s*:?\s*([^\n]{3,90})", bolum1)
+    m = re.search(r"Tedarikçi\b(?!sinin|nin|si)[\s|]*(?:Firma\w*)?[\s|]*:?[\s|]*([^\n]{3,90})", bolum1)
     if m and m.group(1).strip():
         return _pipe_ilk_hucre(m.group(1).strip())
     m = re.search(r"Produc\w*\s+Company\s*\n?\s*([^\n]{3,90})", bolum1, re.IGNORECASE)  # İngilizce MSDS
@@ -517,7 +517,7 @@ def extract_kimyasalin_turu(text: str):
         (r"(?i)köpük\s+kesici|antifoam|defoamer", "KÖPÜK KESİCİ"),
         (r"(?i)yüzey\s+aktif|surfactant", "YÜZEY AKTİF"),
         (r"(?i)katalizör|catalyst", "KATALİZÖR"),
-        (r"(?i)koruyucu(?!\s+gaz\b)|preservative|biocide|biyosit", "KORUYUCU/BİYOSİT"),
+        (r"(?i)koruyucu\s+madde|preservative|biocide|biyosit", "KORUYUCU/BİYOSİT"),
         (r"(?i)şelatlay[ıi]c[ıi]|chelating\s+agent", "ŞELATLAYICI"),
     ]
     for desen, etiket in turler:
