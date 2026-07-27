@@ -163,12 +163,16 @@ def get_official_sinif_for_un(tablo_a_path: str, un_no: str):
 def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
                          ambalaj_tank_dokme: str = "AMBALAJLI"):
     """extractor.extract_adr_info() çıktısından envanter satırı sözlüğü üretir."""
+    # Multi-CAS öncelikli; yoksa tek CAS'e düş; hiçbiri yoksa "-" yaz.
+    # Birden fazla CAS No varsa aynı hücrede alt alta (satır sonu ile
+    # ayrılmış) gösterilir.
+    cas_deger = _cas_listesi_hucre_formati(adr_info.get("cas_listesi")) or adr_info.get("cas_no") or "-"
     row = {
         "Kimyasal Adı": kimyasal_adi,
         "AMBALAJLI/TANK/DÖKME": ambalaj_tank_dokme,
         "MSDS/SDS TARİHİ": adr_info.get("revize_tarihi"),
         "ADR-IMDG-IATA": "ADR",  # Bu sütun her zaman sabit "ADR" yazar (durum ne olursa olsun)
-        "Cas_No": adr_info.get("cas_no") or "-",
+        "Cas_No": cas_deger,
         "Tedarikçi": adr_info.get("tedarikci"),
         "Fonksiyonu": adr_info.get("fonksiyon"),
         "Tehlikeli/ Tehlikesiz": adr_info.get("tehlikeli_tehlikesiz"),
@@ -489,11 +493,12 @@ def build_inventory_row_v2(adr_info: dict, kimyasal_adi: str, ambalaj_tank_dokme
         sadece ürün KESİN tehlikesizse "-" yazılır, tehlikeliyse (H kodu
         varsa) piktogram elle eklenecek şekilde BOŞ bırakılır.
     """
+    cas_deger = _cas_listesi_hucre_formati(adr_info.get("cas_listesi")) or adr_info.get("cas_no") or "-"
     row = {
         "Kimyasal Adı": kimyasal_adi,
         "MSDS/SDS TARİHİ": adr_info.get("revize_tarihi"),
         "Sistem_Kodu/Tedarikçi Firma": adr_info.get("tedarikci"),
-        "Cas_No": adr_info.get("cas_no") or "-",
+        "Cas_No": cas_deger,
         "H KODLARI": adr_info.get("h_kodlari"),
         "Fonksiyonu": adr_info.get("fonksiyon"),
         "Tehlikeli/Tehlikesiz": adr_info.get("tehlikeli_tehlikesiz"),
