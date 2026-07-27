@@ -658,7 +658,7 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
                     sunum[k] = [gostergec]
                 bos_sayisi = len(row_preview) - 1 - len(sunum)  # -1: "durum" anahtarı hariç
                 st.markdown(
-                    f"**Envantere yazılacak 12 otomatik sütun** — {len(sunum)} tanesi PDF'ten "
+                    f"**Envantere yazılacak 11 otomatik sütun** — {len(sunum)} tanesi PDF'ten "
                     f"dolduruldu, {bos_sayisi} tanesi boş (manuel doldurulacak, aşağıda gösterilmiyor):"
                 )
                 if sunum:

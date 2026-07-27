@@ -347,14 +347,14 @@ NOT_IN_SCOPE_TEXT_V2 = "MSDS/SDS Raporu bölüm 14 kapsamında ADR kapsamında d
 # ═══════════════════════════════════════════════════════════════════════
 # 22 sütunlu birleşik format. TMGD (ADR) ve İSG (H kodları, tehlike sınıfı,
 # GRS/GOTS uyumluluğu, kimyasal envanter) gereksinimlerini tek satırda
-# birleştirir. Sütunların 12'si PDF'ten otomatik doldurulur, 10'u manuel
-# giriş için BOŞ bırakılır (LOT, GATEWAY, Use Cat/Type, DEĞERLENDİRME,
+# birleştirir. Sütunların 11'i PDF'ten otomatik doldurulur, 11'i manuel
+# giriş için BOŞ bırakılır (KODU, LOT, GATEWAY, Use Cat/Type, DEĞERLENDİRME,
 # GRS, GOTS, DEPO) — kullanıcı Excel'de elle doldurur.
 
 V3_SUTUNLAR = [
     "Kimyasal Üretici Firma Adı",       # otomatik: extract_uretici
     "Kimyasal Tedarikçi Firma Adı",     # otomatik: extract_tedarikci
-    "KODU",                              # otomatik: extract_urun_kodu
+    "KODU",                              # MANUEL (boş) — elle doldurulacak
     "KİMYASAL ADI",                      # otomatik: extract_suggested_name
     "GELEN LOT BİLGİSİ",                 # MANUEL (boş)
     "STOK LOT BİLGİSİ",                  # MANUEL (boş)
@@ -377,7 +377,7 @@ V3_SUTUNLAR = [
 ]
 
 V3_OTOMATIK_SUTUNLAR = {
-    "Kimyasal Üretici Firma Adı", "Kimyasal Tedarikçi Firma Adı", "KODU",
+    "Kimyasal Üretici Firma Adı", "Kimyasal Tedarikçi Firma Adı",
     "KİMYASAL ADI", "KİMYASALIN TÜRÜ", "CAS NO",
     "MSDS/TDS RAPOR ÜÇ YILI AŞMAYACAK", "MSDS/TDS DİLİ", "H KODLARI",
     "TEHLİKE SINIFI", "TEHLİKE ETİKETİ", "FONKSIONU",
@@ -386,6 +386,7 @@ V3_OTOMATIK_SUTUNLAR = {
 # V3 manuel sütunlar — Excel'de ve uygulama preview'da gizlenecek
 # Veri SILINMEZ, sadece görünürlük kapalı (hidden column)
 V3_MANUEL_SUTUNLAR = {
+    "KODU",
     "GELEN LOT BİLGİSİ",
     "STOK LOT BİLGİSİ",
     "GATEWAY'DE SEVİYE KAYDI",
@@ -446,7 +447,7 @@ def build_inventory_row_v3(adr_info: dict, kimyasal_adi: str):
     row = {
         "Kimyasal Üretici Firma Adı":       adr_info.get("uretici") or adr_info.get("tedarikci"),
         "Kimyasal Tedarikçi Firma Adı":     adr_info.get("tedarikci"),
-        "KODU":                              adr_info.get("urun_kodu"),
+        "KODU":                              None,  # manuel (elle doldurulacak)
         "KİMYASAL ADI":                      kimyasal_adi,
         "GELEN LOT BİLGİSİ":                 None,  # manuel
         "STOK LOT BİLGİSİ":                  None,  # manuel
