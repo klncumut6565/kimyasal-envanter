@@ -191,6 +191,28 @@ def extract_revize_tarihi(text: str):
     return None
 
 
+def _urun_adi_kirp(name: str) -> str:
+    """Bazı dönüştürme araçlarında ayrı alanlar (Ürün ismi, REACH No,
+    CAS No, 1.2 Kullanımlar...) aralarında satır sonu olmadan tek
+    "satıra" birleşiyor; ".+" ile yakalanan değer o durumda ürün
+    adından çok daha fazlasını (sonraki tüm etiket/değerleri) içeriyor.
+    Bilinen bir sonraki-alan işaretçisi bulunursa oradan kırp, ayrıca
+    makul bir üst uzunluk sınırı uygula."""
+    isaretciler = [
+        r"\bREACH\s*No", r"\bCAS[\s-]*No", r"\bCAS[\s-]*[:#]", r"\b1\.2\b",
+        r"\b1\.3\b", r"Tanımlanmış\s+kullan", r"Kullanım\s+alan",
+        r"\bBÖLÜM\s+2\b", r"Tavsiye\s+edilen", r"Tavsiye\s+edilmeyen",
+        r"Tan[ıi]m[ıi]n\s+başka", r"\bEşanlamlı",
+    ]
+    en_erken = len(name)
+    for isaretci in isaretciler:
+        m = re.search(isaretci, name, re.IGNORECASE)
+        if m and m.start() < en_erken:
+            en_erken = m.start()
+    name = name[:en_erken].strip(" -:")
+    return name[:80].strip()
+
+
 def extract_suggested_name(text: str):
     # Çeşitli MSDS formatlarında "Ürün ismi" / "Ürün adı" / "Ticari ismi" /
     # "Ticari isim" / "Ticari adı" / "Ticari Adı" etiketleri kullanılabiliyor.
@@ -208,8 +230,11 @@ def extract_suggested_name(text: str):
         r"Product\s*Name\s*:?\s*(.+)",  # İngilizce MSDS
         r"Trade\s*Name\s*:?\s*(.+)",    # "Trade Name: KROMOFIX..." İngilizce şablon
         r"(?m)^\s*Unvan[ıi]\s+(.+?)\s*$",  # "Unvanı   LAUFIX E" sütun formatı (ERCA GROUP)
+        r"\|\s*Unvan[ıi]\s*\|\s*([^\n|]{2,90})\s*\|",  # "| Unvanı | CINDYE DNK |" pipe tablo formatı
         # BASF formatı: header'da "Ürün: Hydrosulfite F"
         r"(?m)^\s*Ürün:\s*(.+?)\s*$",
+        r"\|\s*Ürün\s*\|\s*ismi\s*\|\s*:?\s*\|\s*([^\n|]{2,90})\s*\|",  # "| Ürün | ismi | : | Iron(II)... |" 4 hücreli format
+        r"\|\s*Ürün\s*\|\s*:?\s*([^\n|]{2,90})\s*\|",  # "| Ürün | : COMPLEXA DEMINERA |" pipe tablo formatı
     ]
     for p in patterns:
         m = re.search(p, text, re.IGNORECASE)
@@ -217,6 +242,7 @@ def extract_suggested_name(text: str):
             name = m.group(1).strip()
             name = re.sub(r"™|®", "", name).strip()
             name = _pipe_ilk_hucre(name)
+            name = _urun_adi_kirp(name)
             if name:
                 return name
     return None
@@ -260,6 +286,25 @@ def _pipe_ilk_hucre(deger: str) -> str:
     return deger
 
 
+_ETIKET_KELIME = re.compile(
+    r"^(?:[Şş]irket|Firma|Tedarikçi|Unvan|Ad[ıi]|Adres|İsim|Name|Kod)\b", re.IGNORECASE
+)
+
+
+def _pipe_satir_deger(line: str) -> str:
+    """'| Şirket Unvanı | ERCA GROUP... |' gibi tam olarak İKİ hücreli bir
+    markdown tablo satırında, ilk hücre bir etiket kelimesiyle
+    başlıyorsa İKİNCİ (değer) hücreyi döner. Diğer tüm durumlarda
+    (örn. '| CHT Germany GmbH | CHT Switzerland AG |' gibi iki ayrı
+    değerin yan yana durduğu satırlarda) davranış değişmez -- ilk dolu
+    hücre döner (_pipe_ilk_hucre)."""
+    if line.count("|") == 2 and line.strip().startswith("|") and line.strip().endswith("|"):
+        hucreler = [h.strip(" -:") for h in line.strip().strip("|").split("|")]
+        if len(hucreler) == 2 and hucreler[0] and _ETIKET_KELIME.match(hucreler[0]):
+            return hucreler[1]
+    return _pipe_ilk_hucre(line)
+
+
 def extract_tedarikci(text: str):
     """Bölüm 1.3'ten tedarikçi/üretici firma adını çıkarır."""
     bolum1 = find_section_text(text, 1, 2) or text[:3000]
@@ -275,6 +320,12 @@ def extract_tedarikci(text: str):
     m = re.search(r"[Şş]irket\s+Unvan[ıi]\s{2,}([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
         return _pipe_ilk_hucre(m.group(1).strip())
+    # "| Şirket Unvanı | ERCA GROUP... |" / "| Şirket Adı | TEKKİM... |" markdown
+    # tablo formatı (tek boşluklu pipe hücreleri -- yukarıdaki 2+ boşluk
+    # deseni bunu yakalamaz)
+    m = re.search(r"[Şş]irket\s+(?:Unvan[ıi]|Ad[ıi])\s*\|\s*([^\n|]{3,90})\s*\|", bolum1, re.IGNORECASE)
+    if m and m.group(1).strip():
+        return _pipe_ilk_hucre(m.group(1).strip())
     # "Tedarikçi" etiketi -- yalnızca kelime sınırında bittiğinde
     # ("Tedarikçi :" veya "Tedarikçi\n") eşleştiriyoruz; "Tedarikçisinin"
     # gibi bir çekim ekiyle devam ediyorsa bu, başlığın bir parçasıdır,
@@ -285,12 +336,20 @@ def extract_tedarikci(text: str):
     m = re.search(r"Produc\w*\s+Company\s*\n?\s*([^\n]{3,90})", bolum1, re.IGNORECASE)  # İngilizce MSDS
     if m and m.group(1).strip():
         return _pipe_ilk_hucre(m.group(1).strip())
+    # "Şirket bilgisi: MKS DevO Kimya..." (MKS DevO şablonu)
+    m = re.search(r"[Şş]irket\s+bilgisi\s*:?\s*([^\n]{3,90})", bolum1)
+    if m and m.group(1).strip():
+        return _pipe_ilk_hucre(m.group(1).strip())
+    # "Firmanın Tanıtımı:\n\nMKS & DevO..." (eski MKS DevO / Complexa şablonu)
+    m = re.search(r"Firman[ıi]n\s+Tan[ıi]t[ıi]m[ıi]\s*:\s*\n?\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
+    if m and m.group(1).strip():
+        return _pipe_ilk_hucre(m.group(1).strip())
     m = re.search(r"1\.3[.\s][^\n]*\n+((?:[^\n]+\n+){0,4})", bolum1)
     if m:
         for line in m.group(1).split("\n"):
             line = line.strip()
             if line and re.search(_COMPANY_SUFFIX, line, re.IGNORECASE):
-                return _pipe_ilk_hucre(line)
+                return _pipe_satir_deger(line)
     # "1.3.1 ... tedarikçi bilgiler ; Firma Adı" — değer etiketle aynı satırda
     m = re.search(r"1\.3\.1[^\n]*tedarik\w*\s+bilgi\w*\s*;\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
