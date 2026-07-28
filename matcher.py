@@ -367,7 +367,7 @@ V3_SUTUNLAR = [
     "Use Category",                      # MANUEL (boş — ZDHC taksonomisi)
     "Use Type",                          # MANUEL (boş — ZDHC alt kategorisi)
     "CAS NO",                            # otomatik: extract_cas_listesi (multi-CAS, alt satırla ayrılır)
-    "MSDS/TDS RAPOR ÜÇ YILI AŞMAYACAK",  # otomatik: extract_revize_tarihi
+    "MSDS/TDS REVİZYON TARİHİ",          # otomatik: extract_revize_tarihi
     "MSDS/TDS DİLİ",                     # otomatik: extract_msds_dili
     "H KODLARI",                         # otomatik: extract_h_kodlari (alt satırla ayrılır)
     "TEHLİKE SINIFI",                    # otomatik: extract_tehlikeli_tehlikesiz
@@ -383,7 +383,7 @@ V3_SUTUNLAR = [
 V3_OTOMATIK_SUTUNLAR = {
     "Kimyasal Üretici Firma Adı", "Kimyasal Tedarikçi Firma Adı",
     "KİMYASAL ADI", "KİMYASALIN TÜRÜ", "CAS NO",
-    "MSDS/TDS RAPOR ÜÇ YILI AŞMAYACAK", "MSDS/TDS DİLİ", "H KODLARI",
+    "MSDS/TDS REVİZYON TARİHİ", "MSDS/TDS DİLİ", "H KODLARI",
     "TEHLİKE SINIFI", "TEHLİKE ETİKETİ", "FONKSIONU",
 }
 
@@ -464,7 +464,7 @@ def build_inventory_row_v3(adr_info: dict, kimyasal_adi: str):
         "Use Category":                      None,  # manuel
         "Use Type":                          None,  # manuel
         "CAS NO":                            cas_deger,
-        "MSDS/TDS RAPOR ÜÇ YILI AŞMAYACAK":  adr_info.get("revize_tarihi"),
+        "MSDS/TDS REVİZYON TARİHİ":          adr_info.get("revize_tarihi"),
         "MSDS/TDS DİLİ":                     adr_info.get("msds_dili"),
         "H KODLARI":                         _h_kodlari_hucre_formati(adr_info.get("h_kodlari")),
         "TEHLİKE SINIFI":                    adr_info.get("tehlikeli_tehlikesiz"),

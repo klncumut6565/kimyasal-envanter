@@ -451,9 +451,9 @@ def _esnek_desen(kelime: str) -> str:
 def extract_fonksiyon(text: str):
     """Bölüm 1.2'den ürünün kullanım amacını/fonksiyonunu çıkarır.
     
-    KRITIK: Başlık numaralandırması ("1.2.1", "1.3" vb.) veya
-    İngilizce şablon metinleri değer diye yakalmasın, sadece
-    açıklayıcı fonksiyon metni dönderebilsin."""
+    KRITIK: Başlık numaralandırması ("1.2.1", "1.3" vb.), 
+    İngilizce metin veya template metinleri değer diye yakalmasın, 
+    sadece Türkçe açıklayıcı fonksiyon metni dönderebilsin."""
     bolum1 = find_section_text(text, 1, 2) or text[:3000]
     patterns = [
         r"(?m)^\s*" + _esnek_desen("Belirlenmiş kullanımlar") + r"\b\s*:?\s*\n?\s*([^\n]{3,80})",
@@ -480,9 +480,18 @@ def extract_fonksiyon(text: str):
             val = m.group(1).strip().rstrip(".")
             # Başlık numarası veya sonraki bölüm başlığı yakalanmışsa atla
             if val and not re.match(r"^\d+\.\d+", val) and not val.startswith("1."):
-                # İngilizce metin içeriyorsa ("Bleaching material..." gibi)
-                # ve Türkçe alternatif yoksa, hala çıkar (fallback)
-                return val
+                # ÖNEMLİ: İngilizce metin KONTROL ET
+                # Common İngilizce keywords — bulunursa, değer İngilizce
+                ing_keywords = [
+                    r"\b(?:used|for|bleaching|material|fabric|washing|dyeing|finishing|"
+                    r"printing|textile|coating|chemical|process|treatment|as a|such as)\b"
+                ]
+                is_english = any(re.search(kw, val, re.IGNORECASE) for kw in ing_keywords)
+                
+                if not is_english:
+                    # Türkçe veya karışık metin — döndür
+                    return val
+                # else: İngilizce metin, sonraki pattern'e devam et
             elif val and "Tanımlanmış" in val and len(val) < 20:
                 # "Tanımlanmış uygun kullanımlar" gibi başlık başı yakalandı, atla
                 continue
