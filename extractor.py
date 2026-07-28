@@ -292,7 +292,7 @@ def _pipe_ilk_hucre(deger: str) -> str:
 
 
 _ETIKET_KELIME = re.compile(
-    r"^(?:[Şş]irket|Firma|Tedarikçi|Unvan|Ad[ıi]|Adres|İsim|Name|Kod)\b", re.IGNORECASE
+    r"^(?:[Şşġ]irket|Firma|Tedarikçi|Unvan|Ad[ıi]|Adres|İsim|Name|Kod)\b", re.IGNORECASE
 )
 
 
@@ -322,13 +322,13 @@ def extract_tedarikci(text: str):
     if m and m.group(1).strip():
         return _pipe_ilk_hucre(m.group(1).strip())
     # "Şirket Unvanı   ERCA GROUP..." sütun formatı — etiket + büyük boşluk + değer
-    m = re.search(r"[Şş]irket\s+[UÜ]nvan[ıi]\s{2,}([^\n]{3,90})", bolum1, re.IGNORECASE)
+    m = re.search(r"[Şşġ]irket\s+[UÜ]nvan[ıi]\s{2,}([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
         return _pipe_ilk_hucre(m.group(1).strip())
     # "| Şirket Unvanı | ERCA GROUP... |" / "| Şirket Adı | TEKKİM... |" markdown
     # tablo formatı (tek boşluklu pipe hücreleri -- yukarıdaki 2+ boşluk
     # deseni bunu yakalamaz)
-    m = re.search(r"[Şş]irket\s+(?:[UÜ]nvan[ıi]|Ad[ıi])\s*\|\s*([^\n|]{3,90})\s*\|", bolum1, re.IGNORECASE)
+    m = re.search(r"[Şşġ]irket\s+(?:[UÜ]nvan[ıi]|Ad[ıi])\s*\|\s*([^\n|]{3,90})\s*\|", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
         return _pipe_ilk_hucre(m.group(1).strip())
     # "Tedarikçi" etiketi -- yalnızca kelime sınırında bittiğinde
@@ -342,7 +342,16 @@ def extract_tedarikci(text: str):
     if m and m.group(1).strip():
         return _pipe_ilk_hucre(m.group(1).strip())
     # "Şirket bilgisi: MKS DevO Kimya..." (MKS DevO şablonu)
-    m = re.search(r"[Şş]irket\s+bilgisi\s*:?\s*([^\n]{3,90})", bolum1)
+    m = re.search(r"[Şşġ]irket\s+bilgisi\s*:?\s*([^\n]{3,90})", bolum1)
+    if m and m.group(1).strip():
+        return _pipe_ilk_hucre(m.group(1).strip())
+    # "| ġirket | : Huntsman Textile Effects |" -- çıplak "Şirket" etiketi,
+    # pipe tablo formatında (bazı dönüştürme araçlarında Ş harfi bozuk
+    # "ġ" karakterine dönüşüyor). Değer şirket soneki içermeyebilir
+    # (ör. "Huntsman Textile Effects" -- Ltd/A.Ş./GmbH yok), bu yüzden
+    # aşağıdaki 1.3 satır taraması (_COMPANY_SUFFIX gerektirir) bunu
+    # yakalayamaz; doğrudan etiket eşleşmesi gerekir.
+    m = re.search(r"[Şşġ]irket\s*\|\s*:?\s*([^\n|]{3,90})\s*\|", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
         return _pipe_ilk_hucre(m.group(1).strip())
     # "Firmanın Tanıtımı:\n\nMKS & DevO..." (eski MKS DevO / Complexa şablonu)
@@ -369,7 +378,7 @@ def extract_tedarikci(text: str):
     # "Mümessil Firma\nFirma Adı" — Türkiye'deki yaygın format (Jay/Tekay şablonu)
     # Mümessil = yerel tedarikçi; üretici firma değil, biz onu alıyoruz.
     for aralik in [bolum1, text[:4000]]:
-        m = re.search(r"Mümessil\s+Firma\s*\n\s*([^\n]{3,90})", aralik, re.IGNORECASE)
+        m = re.search(r"Mümessil\s+Firma\s*\n?\s*([^\n]{3,90})", aralik, re.IGNORECASE)
         if m and m.group(1).strip():
             return _pipe_ilk_hucre(m.group(1).strip())
     # "Üretici   HANGZHOU..." sütun formatı (MGVB/eski şablon — büyük boşluklu)
