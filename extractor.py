@@ -229,10 +229,15 @@ def extract_suggested_name(text: str):
         r"Ürün ad[ıi]\s*:?\s*(.+)",
         r"Product\s*Name\s*:?\s*(.+)",  # İngilizce MSDS
         r"Trade\s*Name\s*:?\s*(.+)",    # "Trade Name: KROMOFIX..." İngilizce şablon
-        r"(?m)^\s*Unvan[ıi]\s+(.+?)\s*$",  # "Unvanı   LAUFIX E" sütun formatı (ERCA GROUP)
-        r"\|\s*Unvan[ıi]\s*\|\s*([^\n|]{2,90})\s*\|",  # "| Unvanı | CINDYE DNK |" pipe tablo formatı
+        r"(?m)^\s*[UÜ]nvan[ıi]\s+(.+?)\s*$",  # "Unvanı   LAUFIX E" sütun formatı (ERCA GROUP)
+        r"\|\s*[UÜ]nvan[ıi]\s*\|\s*([^\n|]{2,90})\s*\|",  # "| Unvanı | CINDYE DNK |" pipe tablo formatı
         # BASF formatı: header'da "Ürün: Hydrosulfite F"
         r"(?m)^\s*Ürün:\s*(.+?)\s*$",
+        # BASF şablonunda "Ürün:" satır başında olmayabilir (aynı satırda
+        # "Revizyon: 9.0 Ürün: Hydrosulfite F (ID no. ...) Basım tarihi..."
+        # gibi metaverilerle iç içe geçebilir) -- parantez veya iki
+        # boşluktan önce durarak daha esnek şekilde yakala
+        r"Ürün:\s*([^\n(]{2,60}?)\s*(?:\(|\s{2,}|$)",
         r"\|\s*Ürün\s*\|\s*ismi\s*\|\s*:?\s*\|\s*([^\n|]{2,90})\s*\|",  # "| Ürün | ismi | : | Iron(II)... |" 4 hücreli format
         r"\|\s*Ürün\s*\|\s*:?\s*([^\n|]{2,90})\s*\|",  # "| Ürün | : COMPLEXA DEMINERA |" pipe tablo formatı
     ]
@@ -317,20 +322,20 @@ def extract_tedarikci(text: str):
     if m and m.group(1).strip():
         return _pipe_ilk_hucre(m.group(1).strip())
     # "Şirket Unvanı   ERCA GROUP..." sütun formatı — etiket + büyük boşluk + değer
-    m = re.search(r"[Şş]irket\s+Unvan[ıi]\s{2,}([^\n]{3,90})", bolum1, re.IGNORECASE)
+    m = re.search(r"[Şş]irket\s+[UÜ]nvan[ıi]\s{2,}([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
         return _pipe_ilk_hucre(m.group(1).strip())
     # "| Şirket Unvanı | ERCA GROUP... |" / "| Şirket Adı | TEKKİM... |" markdown
     # tablo formatı (tek boşluklu pipe hücreleri -- yukarıdaki 2+ boşluk
     # deseni bunu yakalamaz)
-    m = re.search(r"[Şş]irket\s+(?:Unvan[ıi]|Ad[ıi])\s*\|\s*([^\n|]{3,90})\s*\|", bolum1, re.IGNORECASE)
+    m = re.search(r"[Şş]irket\s+(?:[UÜ]nvan[ıi]|Ad[ıi])\s*\|\s*([^\n|]{3,90})\s*\|", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
         return _pipe_ilk_hucre(m.group(1).strip())
     # "Tedarikçi" etiketi -- yalnızca kelime sınırında bittiğinde
     # ("Tedarikçi :" veya "Tedarikçi\n") eşleştiriyoruz; "Tedarikçisinin"
     # gibi bir çekim ekiyle devam ediyorsa bu, başlığın bir parçasıdır,
     # değer etiketi değildir.
-    m = re.search(r"Tedarikçi\b(?!sinin|nin|si)[\s|]*(?:Firma\w*)?[\s|]*:?[\s|]*([^\n]{3,90})", bolum1)
+    m = re.search(r"Tedarikçi\b(?!sinin|nin|si)[\s|]*(?:Firma\w*)?[\s|]*:?[\s|]*([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
         return _pipe_ilk_hucre(m.group(1).strip())
     m = re.search(r"Produc\w*\s+Company\s*\n?\s*([^\n]{3,90})", bolum1, re.IGNORECASE)  # İngilizce MSDS
@@ -342,6 +347,13 @@ def extract_tedarikci(text: str):
         return _pipe_ilk_hucre(m.group(1).strip())
     # "Firmanın Tanıtımı:\n\nMKS & DevO..." (eski MKS DevO / Complexa şablonu)
     m = re.search(r"Firman[ıi]n\s+Tan[ıi]t[ıi]m[ıi]\s*:\s*\n?\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
+    if m and m.group(1).strip():
+        return _pipe_ilk_hucre(m.group(1).strip())
+    # "...Ayrıntılı Bilgileri Birpa Birlik Paz.Taah.Tic.Ltd.Şti Şirket :
+    # Turgut Reis Mah..." -- bu şablonda firma adı "Ayrıntılı Bilgileri"
+    # ile "Şirket :" etiketi arasında yer alır (alışılmadık sıra: "Şirket :"
+    # etiketinin kendisi ADRES ile devam eder, firma adı değil).
+    m = re.search(r"Ayr[ıi]nt[ıi]l[ıi]\s+Bilgileri\s+([^\n]{3,90}?)\s+Şirket\s*:", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
         return _pipe_ilk_hucre(m.group(1).strip())
     m = re.search(r"1\.3[.\s][^\n]*\n+((?:[^\n]+\n+){0,4})", bolum1)
