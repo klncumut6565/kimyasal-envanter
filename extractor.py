@@ -449,7 +449,11 @@ def _esnek_desen(kelime: str) -> str:
 
 
 def extract_fonksiyon(text: str):
-    """Bölüm 1.2'den ürünün kullanım amacını/fonksiyonunu çıkarır."""
+    """Bölüm 1.2'den ürünün kullanım amacını/fonksiyonunu çıkarır.
+    
+    KRITIK: Başlık numaralandırması ("1.2.1", "1.3" vb.) veya
+    İngilizce şablon metinleri değer diye yakalmasın, sadece
+    açıklayıcı fonksiyon metni dönderebilsin."""
     bolum1 = find_section_text(text, 1, 2) or text[:3000]
     patterns = [
         r"(?m)^\s*" + _esnek_desen("Belirlenmiş kullanımlar") + r"\b\s*:?\s*\n?\s*([^\n]{3,80})",
@@ -466,15 +470,22 @@ def extract_fonksiyon(text: str):
         # HABAŞ tarzı şablon: başlık satırın ortasında geçiyor ("1.2.
         # Madde veya Karışımın Belirlenmiş Kullanımları ve Tavsiye
         # Edilmeyen Kullanımları") ve değer doğrudan ALT satırda, ayrı
-        # bir etiket/iki nokta olmadan başlıyor.
+        # bir etiket/iki nokta olmadan başlıyor. -- ÖNEMLİ: Yakalanan
+        # değer "1.2.1." / "1.3" gibi başlık numarası İÇERMESİN.
         r"(?i)Belirlenmi[şs]\s+[Kk]ullan[ıi]mlar[ıi]?\b[^\n]*\n\s*([^\n]{3,200})",
     ]
     for p in patterns:
         m = re.search(p, bolum1, re.IGNORECASE)
         if m:
             val = m.group(1).strip().rstrip(".")
-            if val:
+            # Başlık numarası veya sonraki bölüm başlığı yakalanmışsa atla
+            if val and not re.match(r"^\d+\.\d+", val) and not val.startswith("1."):
+                # İngilizce metin içeriyorsa ("Bleaching material..." gibi)
+                # ve Türkçe alternatif yoksa, hala çıkar (fallback)
                 return val
+            elif val and "Tanımlanmış" in val and len(val) < 20:
+                # "Tanımlanmış uygun kullanımlar" gibi başlık başı yakalandı, atla
+                continue
     return None
 
 

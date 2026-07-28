@@ -631,7 +631,32 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
                     st.write(f"- Türü: `{info.get('kimyasalin_turu') or '-'}`")
                     st.write(f"- CAS ({len(cas_gosterim)} adet): `{', '.join(cas_gosterim) if cas_gosterim else '-'}`")
                     st.write(f"- MSDS Dili: `{info.get('msds_dili') or '-'}`")
-                    st.write(f"- MSDS Tarihi: `{info.get('revize_tarihi') or '-'}`")
+                    msds_tarihi = info.get('revize_tarihi')
+                    msds_display = msds_tarihi or '-'
+                    if msds_tarihi:
+                        # 3 yıl kontrolü
+                        import datetime
+                        try:
+                            tarih_obj = None
+                            # DD.MM.YYYY veya DD/MM/YYYY formatı
+                            if '.' in msds_tarihi or '/' in msds_tarihi:
+                                sep = '.' if '.' in msds_tarihi else '/'
+                                parts = msds_tarihi.split(sep)
+                                if len(parts) == 3:
+                                    gun, ay, yil = int(parts[0]), int(parts[1]), int(parts[2])
+                                    if yil < 100:  # 2 haneli yıl
+                                        yil = 2000 + yil if yil <= 30 else 1900 + yil
+                                    tarih_obj = datetime.datetime(yil, ay, gun)
+                            if tarih_obj:
+                                gun_fark = (datetime.datetime.now() - tarih_obj).days
+                                yil_fark = gun_fark / 365.25
+                                if yil_fark > 3:
+                                    msds_display = f"`{msds_tarihi}` ⚠️ (3 yıl aşılmış: {yil_fark:.1f} yıl)"
+                                elif yil_fark > 2.5:
+                                    msds_display = f"`{msds_tarihi}` ⚠️ (3 yıla yakın)"
+                        except Exception:
+                            pass
+                    st.write(f"- MSDS Tarihi: {msds_display}")
                 else:
                     st.markdown("**Bölüm 14'ten okunan:**")
                     st.write(f"- UN No: `{info.get('un_no') or '-'}`")
@@ -664,25 +689,45 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
                 if sunum:
                     st.table(sunum)
                     
-                    # Tehlike Etiketi özel gösterimi (SVG resim)
+                    # Tehlike Etiketi özel gösterimi (SVG resim + H kodlarından GHS etiketleri)
                     if "TEHLİKE ETİKETİ" in row_preview and row_preview["TEHLİKE ETİKETİ"]:
-                        etiket_text = str(row_preview["TEHLİKE ETİKETİ"]).strip().lower()
-                        if "tehlike" in etiket_text:
-                            etiket_resim = "data/etiketler/tehlike.svg"
-                            etiket_baslik = "🔴 Tehlike Etiketi"
-                        elif "dikkat" in etiket_text or "warning" in etiket_text:
-                            etiket_resim = "data/etiketler/dikkat.svg"
-                            etiket_baslik = "🟡 Dikkat Etiketi"
-                        else:
-                            etiket_resim = None
+                        etiket_text = str(row_preview["TEHLİKE ETİKETİ"]).strip()
                         
-                        if etiket_resim and os.path.exists(etiket_resim):
-                            st.markdown(f"**{etiket_baslik}:**")
-                            col1, col2 = st.columns([2, 3])
-                            with col1:
-                                st.image(etiket_resim, width=80)
-                            with col2:
-                                st.write(f"*{row_preview['TEHLİKE ETİKETİ']}*")
+                        # H kodlarından GHS etiketleri çıkar
+                        h_kodlari = info.get('h_kodlari', []) or []
+                        ghs_etiketler = []
+                        
+                        # H kodu -> GHS etiket mapping
+                        ghs_map = {
+                            "H200": "GHS01_Patlayıcı",
+                            "H220": "GHS02_Alevlenir", "H225": "GHS02_Alevlenir", "H240": "GHS02_Alevlenir",
+                            "H271": "GHS03_Oksitleyici", "H272": "GHS03_Oksitleyici",
+                            "H280": "GHS04_Basınç altındaki gazlar",
+                            "H314": "GHS05_Aşındırıcı", "H318": "GHS05_Aşındırıcı",
+                            "H301": "GHS06_Akut toksisite", "H311": "GHS06_Akut toksisite", "H331": "GHS06_Akut toksisite",
+                            "H372": "GHS08_Eşey hücre mutajenitesi", "H373": "GHS08_Eşey hücre mutajenitesi",
+                            "H400": "GHS09_Sucul çevreye zararlı", "H410": "GHS09_Sucul çevreye zararlı",
+                        }
+                        
+                        for h in h_kodlari:
+                            h_clean = h.strip().upper() if h else ""
+                            if h_clean in ghs_map:
+                                ghs_etiketler.append(ghs_map[h_clean])
+                        
+                        # Duplikasyonları kaldır
+                        ghs_etiketler = list(dict.fromkeys(ghs_etiketler))
+                        
+                        st.markdown("**⚠️ GHS Tehlike Etiketleri:**")
+                        if ghs_etiketler:
+                            cols = st.columns(min(4, len(ghs_etiketler)))
+                            for idx, ghs in enumerate(ghs_etiketler):
+                                etiket_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+                                                           f"data/etiketler/ghs/{ghs}.svg")
+                                if os.path.exists(etiket_path):
+                                    with cols[idx % len(cols)]:
+                                        st.image(etiket_path, width=80)
+                        else:
+                            st.write(f"*{etiket_text}* (Detaylı H kodu çıkarılamadı)")
                 else:
                     st.info("Bu PDF'ten hiçbir otomatik alan çıkarılamadı — tüm sütunlar manuel doldurulacak.")
             elif v2:
