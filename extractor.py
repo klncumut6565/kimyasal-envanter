@@ -354,6 +354,24 @@ def extract_tedarikci(text: str):
     m = re.search(r"[Şşġ]irket\s*\|\s*:?\s*([^\n|]{3,90})\s*\|", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
         return _pipe_ilk_hucre(m.group(1).strip())
+    # "Şirket Adı: Mavi Colour Kimya..." -- pipe olmayan düz metin formatı
+    m = re.search(r"[Şşġ]irket\s+Ad[ıi]\s*:\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
+    if m and m.group(1).strip():
+        return _pipe_ilk_hucre(m.group(1).strip())
+    # "Manufacturer/ Supplier:\n\nCHT TURKEY..." -- İngilizce MSDS etiketi
+    m = re.search(r"(?:Manufacturer\s*/\s*)?Supplier\s*:?[\s|]*([^\n|]{3,90})", bolum1, re.IGNORECASE)
+    if m and m.group(1).strip():
+        return _pipe_ilk_hucre(m.group(1).strip())
+    # "...tedarikçisinin bilgileri Tekay Kimya Mümessillik ve Ticaret Ltd
+    # Şti. İstanbul... Tel: +90..." -- başlık ve firma adı/adresi AYNI
+    # paragrafta, hiçbir etiket veya "\n" olmadan birleşiyor (Tekay Kimya
+    # şablonu). "Tel:"/"Fax:" sınırına kadar olan kısmı al.
+    m = re.search(
+        r"tedarikçisinin\s+bilgileri\.?\s*:?\s*([^\n]{3,150}?)\s*(?:Tel\s*[:.]|Fax\s*[:.]|GBF)",
+        bolum1, re.IGNORECASE,
+    )
+    if m and m.group(1).strip():
+        return _pipe_ilk_hucre(m.group(1).strip())
     # "Firmanın Tanıtımı:\n\nMKS & DevO..." (eski MKS DevO / Complexa şablonu)
     m = re.search(r"Firman[ıi]n\s+Tan[ıi]t[ıi]m[ıi]\s*:\s*\n?\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
