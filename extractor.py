@@ -362,6 +362,13 @@ def extract_tedarikci(text: str):
     m = re.search(r"[Şşġ]irket\s*\|\s*:?\s*([^\n|]{3,90})\s*\|", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
         return _pipe_ilk_hucre(m.group(1).strip())
+    # "Şirket     : Huntsman Textile Effects" -- Huntsman formatı (çok boşluk)
+    m = re.search(r"[Şşġ]irket\s+:\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
+    if m and m.group(1).strip():
+        deger = m.group(1).strip()
+        # "Adres", "Telefon" gibi sonraki etiketler yakalanmadığını kontrol et
+        if not re.match(r"(?i)Adres|Telefon|Fax", deger):
+            return _pipe_ilk_hucre(deger)
     # "Şirket Adı: Mavi Colour Kimya..." -- pipe olmayan düz metin formatı
     m = re.search(r"[Şşġ]irket\s+Ad[ıi]\s*:\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
