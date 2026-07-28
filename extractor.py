@@ -240,6 +240,14 @@ def extract_suggested_name(text: str):
         r"Ürün:\s*([^\n(]{2,60}?)\s*(?:\(|\s{2,}|$)",
         r"\|\s*Ürün\s*\|\s*ismi\s*\|\s*:?\s*\|\s*([^\n|]{2,90})\s*\|",  # "| Ürün | ismi | : | Iron(II)... |" 4 hücreli format
         r"\|\s*Ürün\s*\|\s*:?\s*([^\n|]{2,90})\s*\|",  # "| Ürün | : COMPLEXA DEMINERA |" pipe tablo formatı
+        # "Ticaret Adı…...…:REACTIVE DEEP NIGHT SS CAS #..." -- nokta dolgulu
+        # eski usül SHAH INDUSTRIES şablonu; "CAS" veya "Kimyasal Adı"
+        # görülünce dur (aksi halde bunlar da değere karışır)
+        r"Ticaret\s*Ad[ıi][.…\s]*:\s*([^\n]{2,80}?)\s*(?:CAS\b|Kimyasal\s*Ad|$)",
+        # "| 1.1 Malzeme |  | Susuz Sodyum Karbonat |" -- bazı eski
+        # şablonlarda ürün adı "Ürün"/"Ticari" değil "Malzeme" etiketiyle
+        # geçiyor (Soda şablonu)
+        r"\|\s*(?:\d\.\d\s*)?Malzeme\s*\|\s*\|?\s*([^\n|]{2,80})\s*\|",
     ]
     for p in patterns:
         m = re.search(p, text, re.IGNORECASE)
@@ -376,6 +384,15 @@ def extract_tedarikci(text: str):
     m = re.search(r"Firman[ıi]n\s+Tan[ıi]t[ıi]m[ıi]\s*:\s*\n?\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
         return _pipe_ilk_hucre(m.group(1).strip())
+    # "1.3 Şirketin Tanıtımı: YAR-KİM ENDÜSTRİYEL..." (SOL-5 şablonu)
+    m = re.search(r"[Şşġ]irketin\s+Tan[ıi]t[ıi]m[ıi]\s*:\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
+    if m and m.group(1).strip():
+        return _pipe_ilk_hucre(m.group(1).strip())
+    # "1.3 Üretici Adres: Soda Sanayii A.Ş. ..." (Soda şablonu -- "Adres"
+    # etiketine rağmen değer firma adıyla başlıyor)
+    m = re.search(r"Üretici\s+Adres\s*:\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
+    if m and m.group(1).strip():
+        return _pipe_ilk_hucre(m.group(1).strip())
     # "...Ayrıntılı Bilgileri Birpa Birlik Paz.Taah.Tic.Ltd.Şti Şirket :
     # Turgut Reis Mah..." -- bu şablonda firma adı "Ayrıntılı Bilgileri"
     # ile "Şirket :" etiketi arasında yer alır (alışılmadık sıra: "Şirket :"
@@ -407,6 +424,12 @@ def extract_tedarikci(text: str):
         m = re.search(r"Üretici\s+Firma\s*\n\s*([^\n]{3,90})", aralik, re.IGNORECASE)
         if m and m.group(1).strip():
             return _pipe_ilk_hucre(m.group(1).strip())
+    # Genel yedek: sadece "Şirket :" (başka özel etiket olmadan) --
+    # başlıktaki "şirketin/dağıtıcının kimliği" ile karışmasın diye
+    # zorunlu ":" gerektirir (başlıkta hemen ":" gelmez)
+    m = re.search(r"\bŞirket\s*:\s*([^\n]{3,90})", bolum1)
+    if m and m.group(1).strip():
+        return _pipe_ilk_hucre(m.group(1).strip())
     return None
 
 
