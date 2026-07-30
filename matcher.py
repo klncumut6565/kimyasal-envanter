@@ -293,9 +293,10 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
         # eşleşen satırından çekiyoruz -- diğer tüm alanlar (Uygun
         # Sevkiyat Adı, Tank Kodu vb.) da zaten aynı şekilde Tablo A'dan
         # geliyor, tutarlı olsun. Tablo A'da bu UN/sınıf için PG yoksa
-        # (örn. gazlar, Sınıf 1) bu None'dır ve hücre boş bırakılır --
-        # "MANUEL KONTROL GEREKLİ" YAZILMAZ, çünkü bu bir hata değildir.
-        row["PAKETLEME GRUBU"] = match["paketleme_grubu"]
+        # (örn. gazlar, Sınıf 1) "-" yazılır -- "MANUEL KONTROL GEREKLİ"
+        # YAZILMAZ, çünkü PG'nin olmaması bir hata değil, ADR'nin kendisi
+        # için doğru olan durumdur (Tablo A'da da bu hücre boştur).
+        row["PAKETLEME GRUBU"] = match["paketleme_grubu"] or "-"
 
     if match is None:
         row.update({
