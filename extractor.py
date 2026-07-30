@@ -989,6 +989,35 @@ def explicit_not_in_scope(section14_text: str) -> bool:
     return False
 
 
+def _sec14_normalize(sec14_text: str) -> str:
+    """KÖK NEDEN DÜZELTMESİ — pdfplumber layout modunda her satırı sabit
+    genişliğe (~80-82 karakter) SAĞDAN BOŞLUKLA DOLDURUR. Bu dolgu,
+    bu modüldeki tüm mesafe pencerelerini (.{0,150}, .{0,200}, .{0,300})
+    şişirip eşleşmeleri kaçırıyordu:
+
+        '     14.1. UN numarası<60 boşluk>\\n<82 boşluk>\\n   ADR/RID: UN 3265'
+
+    Etiket ile değer arası GÖRSEL olarak 2 satır, ama KARAKTER olarak
+    230+ -- yani pencereye sığmıyor ve UN no bulunamıyor, ürün
+    "MANUEL KONTROL GEREKLİ" olarak işaretleniyordu (Argon/HABAŞ,
+    CINDYE DNK/ERCA, FORACID TA/FOURKIM şablonlarında doğrulandı).
+
+    Çözüm: satır sonu dolgularını at, satır içi boşluk dizilerini en
+    fazla 2'ye indir. Satır YAPISI (\\n'ler) korunur -- find_adr_block ve
+    satır bazlı desenler etkilenmez; yalnızca yapay karakter mesafesi
+    ortadan kalkar."""
+    if not sec14_text:
+        return sec14_text
+    satirlar = []
+    for satir in sec14_text.split("\n"):
+        satir = satir.replace("\xa0", " ").rstrip()
+        # Satır içi uzun boşluk dizileri (sütun hizalaması) 2 boşluğa
+        # indirilir -- sütun sınırı sinyali korunur, şişme kaybolur.
+        satir = re.sub(r" {3,}", "  ", satir)
+        satirlar.append(satir)
+    return "\n".join(satirlar)
+
+
 def find_adr_block(section14_text: str):
     """Bölüm 14 içinde tam olarak 'ADR' başlığına sahip bloğu bul (ADNR ile karıştırma)."""
     lines = section14_text.split("\n")
@@ -1085,11 +1114,14 @@ def parse_numbered_subsections(sec14_text: str):
                         # "UN Numarası\n:\nUN 1072" formatı — etiket, ":" ve
                         # değer 3 AYRI satırda (14.1. ADR: alt başlığı,
                         # pdfplumber'ın sütunları alt alta dizdiği tablo).
-                        # Diğer varyantlardan farkı: etiketle değer arasında
-                        # tek başına bir ":" satırı var, bu yüzden \s*\n\s*
-                        # yeterli olmuyor -- ":?" ile bunu ayrıca tolere ediyoruz.
+                        # AYRICA "UN Numarası : UN 1006" (etiket, ":" ve
+                        # değer AYNI satırda — HABAŞ/Argon şablonu, 14.1
+                        # başlığı "ADR:" olduğu için 14.1 kalıbı tutmaz).
+                        # ":" ve satır sonu ikisi de opsiyonel/serbest
+                        # sırada tolere edilir.
                         m = re.search(
-                            r"[ÜU]N\s*Numaras[ıi]\s*\n\s*:?\s*\n?\s*(?:[ÜU]N\s*)?(\d{3,4})\b",
+                            r"[ÜU]N\s*Numaras[ıi]\s*:?\s*(?:\n\s*)?:?\s*"
+                            r"(?:[ÜU]N\s*)?(\d{3,4})\b",
                             sec14_text, re.IGNORECASE)
                         if m:
                             un_no = m.group(1)
@@ -1374,6 +1406,10 @@ def extract_adr_info(pdf_path: str, ai_chain: list = None, ai_models: dict = Non
     if sec14 is None:
         # Bölüm 14 bile bulunamadıysa -> manuel kontrol gerekli
         return result
+
+    # Layout dolgu boşluklarını temizle — aşağıdaki TÜM desenler mesafe
+    # pencerelerine dayandığı için bu adım zorunlu (bkz. _sec14_normalize).
+    sec14 = _sec14_normalize(sec14)
 
     result["ham_metin_bulundu"] = True
 
