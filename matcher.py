@@ -31,6 +31,11 @@ def load_tablo_a(path: str):
                 else None
             ),
             "paketleme_grubu": (ws.cell(row=r, column=5).value or "").strip() or None,
+            # Tablo A sütun 6 = "Etiketler" (ADR 5.2.2 tehlike etiketi kodları,
+            # örn. "2.2", "8", "3+6.1"). Bu sütun daha önce HİÇ okunmuyordu --
+            # bu yüzden envanterdeki "ADR İŞARETİ" hücresi hep boş kalıyordu.
+            "etiketler": (str(ws.cell(row=r, column=6).value).strip()
+                          if ws.cell(row=r, column=6).value is not None else None),
             "ozel_hukumler": ws.cell(row=r, column=7).value,
             "sinirli_miktar": ws.cell(row=r, column=8).value,
             "istisnai_miktar": ws.cell(row=r, column=9).value,
@@ -181,10 +186,11 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
         "H KODLARI": adr_info.get("h_kodlari") or "-",
         "durum": "ok",  # ok | not_in_scope | manual_review
     }
-    # "Tehlike Etiketi" sütunu görsel (piktogram) için ayrılmıştır, metin
-    # yazılmaz -- UN no gerçekten varsa (bu fonksiyonun en altındaki "ok"
-    # yolu) hiç dokunulmaz; kapsam dışı/manuel kontrolde ise sadece ürün
-    # KESİN tehlikesizse "-" yazılır (Versiyon 2 ile aynı kural).
+    # "Tehlike Etiketi" sütunu GHS piktogramı için ayrılmıştır. Piktogram
+    # görselini excel_writer H kodlarından üretip hücreye gömer; buraya
+    # ayrıca uyarı kelimesi (Tehlike/Dikkat) metin olarak yazılır, hiç
+    # veri yoksa "-" konur -- hücre ARTIK BOŞ BIRAKILMAZ.
+    row["Tehlike Etiketi"] = adr_info.get("tehlike_etiketi") or "-"
 
     if adr_info.get("adr_kapsaminda") is False:
         row.update({
@@ -198,6 +204,7 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
             "TANK KODU": NOT_IN_SCOPE_TEXT,
             "AMBALAJLAMA TALİMATLARI": NOT_IN_SCOPE_TEXT,
             "TAŞIMA KATEGORİSİ/(TÜNEL KODU)": NOT_IN_SCOPE_TEXT,
+            "ADR İŞARETİ": "-",   # kapsam dışı -> ADR işareti yok
         })
         if adr_info.get("tehlikeli_tehlikesiz") == "Tehlikesiz":
             row["Tehlike Etiketi"] = "-"
@@ -216,6 +223,7 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
             "TANK KODU": MANUAL_REVIEW_TEXT,
             "AMBALAJLAMA TALİMATLARI": MANUAL_REVIEW_TEXT,
             "TAŞIMA KATEGORİSİ/(TÜNEL KODU)": MANUAL_REVIEW_TEXT,
+            "ADR İŞARETİ": MANUAL_REVIEW_TEXT,
         })
         if adr_info.get("tehlikeli_tehlikesiz") == "Tehlikesiz":
             row["Tehlike Etiketi"] = "-"
@@ -297,6 +305,10 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
         # YAZILMAZ, çünkü PG'nin olmaması bir hata değil, ADR'nin kendisi
         # için doğru olan durumdur (Tablo A'da da bu hücre boştur).
         row["PAKETLEME GRUBU"] = match["paketleme_grubu"] or "-"
+        # ADR İŞARETİ: Tablo A "Etiketler" sütunundan gelen etiket kodları.
+        # Hücreye METİN olarak yazılır; excel_writer ayrıca bu kodlara
+        # karşılık gelen ADR elmas görselini aynı hücreye gömer.
+        row["ADR İŞARETİ"] = match.get("etiketler") or "-"
 
     if match is None:
         row.update({
@@ -307,6 +319,7 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
             "TANK KODU": MANUAL_REVIEW_TEXT,
             "AMBALAJLAMA TALİMATLARI": MANUAL_REVIEW_TEXT,
             "TAŞIMA KATEGORİSİ/(TÜNEL KODU)": MANUAL_REVIEW_TEXT,
+            "ADR İŞARETİ": MANUAL_REVIEW_TEXT,
         })
         # Resmi sınıfla bile eşleşme bulunamadıysa (örn. PG de yanlış
         # olabilir), en azından tespit edilen sınıf tutarsızlığını bildir.

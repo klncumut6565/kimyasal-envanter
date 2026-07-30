@@ -452,6 +452,49 @@ def fill_or_append_v2(envanter_path: str, output_path: str, urunler: list,
     return sonuc
 
 
+def _etiket_gorseli_goml(ws, row, col, kodlar, hucre_yuksekligi=110):
+    """Verilen ADR/GHS kod listesinin PNG görsellerini hücreye gömer.
+
+    msds-ozetleyici'deki yaklaşımın Excel karşılığı: orada etiketler HTML'de
+    `<img src="data:...">` ile gösteriliyor; burada aynı orijinal görseller
+    base64 PNG olarak etiket_gorselleri.py'de gömülü ve openpyxl ile
+    doğrudan hücreye yerleştiriliyor (çalışma zamanında dönüştürücü paket
+    GEREKMEZ).
+
+    Birden fazla etiket varsa (örn. "3+6.1") hücre içinde YAN YANA dizilir --
+    bunun için OneCellAnchor + colOff (EMU) kullanılır; sadece hücre adı
+    verilirse tüm görseller üst üste binerdi."""
+    if not kodlar:
+        return
+    try:
+        from etiket_gorselleri import png_akisi
+        from openpyxl.drawing.spreadsheet_drawing import (
+            AnchorMarker, OneCellAnchor)
+        from openpyxl.drawing.xdr import XDRPositiveSize2D
+    except Exception:
+        return  # modül yoksa sessizce geç, metin değeri hücrede zaten var
+
+    EMU = 9525  # 1 piksel = 9525 EMU
+    # Satır yüksekliği punto; 1 punto ≈ 1.333 piksel. Görseli satıra sığdır,
+    # alt tarafta metin (uyarı kelimesi / etiket kodu) için pay bırak.
+    kenar = max(20, min(52, int(hucre_yuksekligi * 1.333 * 0.42)))
+    for i, kod in enumerate(kodlar[:3]):     # en fazla 3 etiket
+        akis = png_akisi(kod)
+        if akis is None:
+            continue
+        try:
+            img = XLImage(akis)
+            img.width = kenar
+            img.height = kenar
+            imza = AnchorMarker(col=col - 1, colOff=(4 + i * (kenar + 3)) * EMU,
+                                 row=row - 1, rowOff=4 * EMU)
+            img.anchor = OneCellAnchor(
+                _from=imza, ext=XDRPositiveSize2D(kenar * EMU, kenar * EMU))
+            ws.add_image(img)
+        except Exception:
+            continue
+
+
 def add_products(envanter_path: str, output_path: str, urunler: list,
                   pdf_relative_paths: list = None):
     """
@@ -510,6 +553,22 @@ def add_products(envanter_path: str, output_path: str, urunler: list,
 
         if name_col and pdf_relative_paths and i < len(pdf_relative_paths) and pdf_relative_paths[i]:
             _add_pdf_hyperlink(ws, target_row, name_col, pdf_relative_paths[i])
+
+        # ── Etiket görselleri ────────────────────────────────────────────
+        # "ADR İŞARETİ"  <- Tablo A "Etiketler" kodları (2.2, 8, 3+6.1 ...)
+        # "Tehlike Etiketi" <- H kodlarından türetilen GHS piktogramları
+        try:
+            from etiket_gorselleri import adr_etiket_kodlari, ghs_kodlari
+            adr_col = col_map.get(_norm("ADR İŞARETİ"))
+            if adr_col:
+                _etiket_gorseli_goml(ws, target_row, adr_col,
+                                      adr_etiket_kodlari(urun.get("ADR İŞARETİ")))
+            teh_col = col_map.get(_norm("Tehlike Etiketi"))
+            if teh_col:
+                _etiket_gorseli_goml(ws, target_row, teh_col,
+                                      ghs_kodlari(urun.get("H KODLARI")))
+        except Exception:
+            pass  # görsel gömülemezse metin değerleri hücrede kalır
 
         # V1: Tüm veri girilen satırlar sabit 110 yüksekliğe getirilir.
         # (Önceki _auto_fit_row_height uzun "kapsam dışı" metinlerde satırı
