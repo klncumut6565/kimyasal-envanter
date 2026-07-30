@@ -538,6 +538,7 @@ def _fonksiyon_temizle(val: str):
     # Sütun hizalamasından gelen çoklu boşlukları teke indir; baştaki/
     # sondaki artık noktalama işaretlerini (nokta, tire, iki nokta) at.
     val = re.sub(r"\s{2,}", " ", val).strip().strip("-–:.").strip()
+    val = _fonksiyon_kisalt(val)
     return val or None
 
 
@@ -579,6 +580,40 @@ def _fonksiyon_gecersiz(val: str) -> bool:
         if re.match(p, d, re.IGNORECASE):
             return True
     return False
+
+
+# Kırpma eşiği: bu uzunluğu AŞAN fonksiyon metinleri, MSDS Bölüm 1.2'de
+# çok maddeli bir kullanım listesi (";" veya "," ile ayrılmış) olduğu için
+# ilk maddeye indirilir. Eşiğin altındaki değerlere DOKUNULMAZ -- örn.
+# "Tekstil boyaları, finisyon ve baskı ürünleri - ağartıcı ve diğer" (63)
+# ya da "Boya koruyucu, yükseltgen madde" (31) olduğu gibi kalır.
+_FONKSIYON_KIRPMA_ESIGI = 70
+
+# İlk maddenin SONUNDA kalan ve tek başına anlam taşımayan bağlaç/ek
+# kelimeler ("... koruyucu gaz olarak" -> "... koruyucu gaz").
+_FONKSIYON_SON_EKLER = (
+    r"\s+(?:olarak|i[çc]in|amac[ıi]yla|kullan[ıi]l[ıi]r|"
+    r"kullan[ıi]lmaktad[ıi]r|kullan[ıi]m[ıi]nda|ile)\s*$"
+)
+
+
+def _fonksiyon_kisalt(val: str) -> str:
+    """Çok maddeli uzun kullanım listelerini ilk maddeye indirir.
+
+    HABAŞ tarzı gaz MSDS'lerinde Bölüm 1.2 onlarca kullanım alanını tek
+    paragrafta sayar; bunun tamamı envanter hücresine sığmaz ve okunmaz.
+    Ayraç önceliği: ";" (güçlü madde ayracı) > ",".
+    """
+    if not val or len(val) <= _FONKSIYON_KIRPMA_ESIGI:
+        return val
+    for ayrac in (";", ","):
+        if ayrac in val:
+            ilk = val.split(ayrac)[0].strip()
+            if len(ilk) >= 12:          # anlamlı bir madde mi?
+                val = ilk
+                break
+    val = re.sub(_FONKSIYON_SON_EKLER, "", val, flags=re.IGNORECASE).strip()
+    return val.strip(" ,;.-–:")
 
 
 def extract_fonksiyon(text: str):
