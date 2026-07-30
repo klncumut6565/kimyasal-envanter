@@ -798,13 +798,36 @@ def extract_msds_dili(text: str):
 
 
 def extract_h_kodlari(text: str):
-    """Bölüm 2'den H kodlarını (H317, H318+H319 vb.) çıkarır, tekilleştirir."""
+    """Bölüm 2'den zararlılık kodlarını çıkarır, tekilleştirir.
+
+    Hem H kodları (H317, H318+H319 ...) hem de EUH kodları (EUH014,
+    EUH208 ...) yakalanır. ESKİ DAVRANIŞ: yalnızca `\\bH\\d{3}\\b` aranıyordu;
+    "EUH208" içindeki "H208" kelime sınırı nedeniyle eşleşmediğinden EUH
+    kodları HİÇ yakalanmıyor, alan boş kalıyor ve AI katmanına düşüyordu --
+    AI de yalnızca EUH kodlarını yazıp gerçek H kodlarını atlayabiliyordu.
+
+    Sıralama: önce gerçek H kodları, sonra EUH kodları (envanterde asıl
+    sınıflandırma önce görünsün).
+
+    EUH210 / EUH401 bilgi amaçlıdır (zararlılık ifadesi değil) ve elenir."""
     bolum2 = find_section_text(text, 2, 3) or text
-    kodlar = re.findall(r"\bH\d{3}(?:\+H\d{3})*\b", bolum2)
-    seen = []
-    for k in kodlar:
-        if k not in seen:
-            seen.append(k)
+    try:
+        from ai_destek import BILGI_AMACLI_EUH
+    except Exception:
+        BILGI_AMACLI_EUH = frozenset({"EUH210", "EUH401"})
+
+    h_kodlari, euh_kodlari = [], []
+    # (?<![A-Za-z]) : "EU" ön ekini yakalamadan H kodunu ayırt eder;
+    # EUH ayrı grup olarak ele alınır.
+    for m in re.finditer(r"\b(EUH\d{3}|H\d{3}(?:\+H\d{3})*)\b", bolum2):
+        kod = m.group(1).upper()
+        if kod in BILGI_AMACLI_EUH:
+            continue
+        hedef = euh_kodlari if kod.startswith("EUH") else h_kodlari
+        if kod not in hedef:
+            hedef.append(kod)
+
+    seen = h_kodlari + euh_kodlari
     return ", ".join(seen) if seen else None
 
 

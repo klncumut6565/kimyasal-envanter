@@ -50,12 +50,21 @@ except Exception:
 # ── Eksik alan açıklamaları (AI'ya SADECE bunlar sorulur) ─────────────────
 # key: extractor.py'deki sözlük anahtarıyla BİREBİR aynı olmalı (matcher.py
 # bu anahtarları doğrudan okuyor).
+# Bunlar ZARARLILIK ifadesi DEĞİL, bilgi amaçlı ek ifadelerdir; envanterin
+# "H KODLARI" sütununa yazılmamalıdır:
+#   EUH210 - "Güvenlik bilgi formu talep halinde sağlanır"
+#   EUH401 - "İnsan sağlığına ve çevreye yönelik riskleri önlemek için
+#             kullanım talimatına uyunuz" (bitki koruma ürünleri)
+# Bir ürünün tehlike profili hakkında hiçbir şey söylemedikleri için
+# hem regex hem AI yolunda elenirler.
+BILGI_AMACLI_EUH = frozenset({"EUH210", "EUH401"})
+
 ALAN_ACIKLAMALARI = {
     # ═══ V1/V2 alanları ═══
     "tedarikci": "Tedarikçi firma adı — MSDS'in Bölüm 1.3'ündeki 'Tedarikçi' veya 'Firma Adı' altında görünen firma. Üreticiden farklıysa satıcı/distribütör firmadır. Sadece firma adını dön (adres, telefon YAZMA).",
     "fonksiyon": "Ürünün kullanım amacı — SADECE MSDS Bölüm 1.2 'Belirlenmiş Kullanımlar' altında YAZAN metni BİREBİR kopyala. Kendi bilginle kullanım alanı EKLEME, listeyi genişletme. Bölüm 1.2 yoksa null dön.",
     "cas_no": "CAS numarası — SADECE belgede (Bölüm 3 veya Bölüm 1) YAZAN CAS. Format: 000-00-0. Karışımlarda ana/ilk bileşenin CAS'i. Belgede CAS yazmıyorsa null dön; kimyasalı tanıyor olsan bile ezberden CAS YAZMA.",
-    "h_kodlari": "H kodları (Bölüm 2), virgülle ayrılmış liste. Örn: 'H302, H315, H319'. EUH kodları da dahil edilebilir (EUH031, EUH208 gibi).",
+    "h_kodlari": "Zararlılık (H) kodları — SADECE Bölüm 2.2 'Zararlılık İfadeleri' altında YAZAN kodlar, virgülle ayrılmış. Örn: 'H302, H315, H319'. Zararlılıkla ilgili EUH kodları (EUH014, EUH031, EUH208 gibi) dahil edilebilir. ANCAK bilgi amaçlı olan EUH210 ve EUH401'i ASLA yazma - bunlar zararlılık ifadesi değildir. Belgede hiç H kodu yoksa null dön; ürünün ne olduğunu bilerek ezberden H kodu YAZMA.",
     "tehlikeli_tehlikesiz": "Ürün 'Tehlikeli' mi 'Tehlikesiz' mi (Bölüm 2 sınıflandırmasına göre). SADECE bu iki değerden birini dön.",
     "tehlike_etiketi": "Uyarı/işaret kelimesi (Bölüm 2.2). SADECE 'Tehlike' veya 'Dikkat' değerlerinden birini dön.",
     "revize_tarihi": "Belgenin revizyon/güncelleme/yayın tarihi (genelde Bölüm 16 veya belge başlığında). Format: GG.AA.YYYY (örn: '05.03.2025').",
@@ -266,6 +275,11 @@ def _pdf_dogrula(alan: str, deger, metin_norm: str):
         # Kodu belgede birebir ara (H302, 64-18-6 ...). Boşluk/noktalama
         # farkını tolere etmek için normalize edilmiş metinde arıyoruz.
         kalan = [k for k in kodlar if _tr_normalize(k) and _tr_normalize(k) in metin_norm]
+        if alan == "h_kodlari":
+            # Bilgi amaçlı EUH kodları (EUH210/EUH401) zararlılık ifadesi
+            # değildir -- belgede geçseler bile envantere yazılmaz.
+            kalan = [k for k in kalan
+                     if str(k).strip().upper() not in BILGI_AMACLI_EUH]
         return kalan or None
 
     # ── mod == "metin" ──
