@@ -486,15 +486,37 @@ _FONKSIYON_ETIKET_ONEKLERI = [
     # "Tanımlama/Kullanım <değer>" — iki nokta YOK, sütun boşluğu var.
     r"^\s*(?:tan[ıi]mlama|kullan[ıi]m)\s*/\s*(?:kullan[ıi]m[ıi]?|tan[ıi]mlama)\s*:?\s+",
     # "Madde/Müstahzarın Kullanımı <değer>" / "Madde/Karışımın kullanımı <değer>"
-    r"^\s*madde\s*/\s*(?:m[üu]stahzar[ıi]n|kar[ıi][şs][ıi]m[ıi]n)\s*(?:kullan[ıi]m[ıi]?)?\s*:?\s+",
+    r"^\s*madde(?:nin)?\s*/\s*(?:m[üu]stahzar[ıi]n|kar[ıi][şs][ıi]m[ıi]n)\s*(?:kullan[ıi]m[ıi]?)?\s*:?\s+",
+    # "Ana kullanım kategorisi : <değer>" — etiket değere yapışmış.
+    r"^\s*ana\s+kullan[ıi]m\s+kategorisi\s*:?\s+",
+    # Tek başına "Kullanım" etiketi + SÜTUN BOŞLUĞU (2+ boşluk) ya da ":".
+    # 2+ boşluk şartı bilinçli: "Kullanım kolaylığı sağlar" gibi GERÇEK bir
+    # değer (tek boşluk) yanlışlıkla kırpılmasın.
+    r"^\s*kullan[ıi]m[ıi]?\s*:\s+",
+    r"^\s*kullan[ıi]m[ıi]?\s{2,}",
     # Genel: bilinen bir etiket kelimesiyle BAŞLAYIP ":" ile biten kısa
     # önek. Önekte VİRGÜL olmamalı — böylece "Ürün, tekstil boyamada
     # kullanılır: özellikle pamukta" gibi GERÇEK bir cümle yanlışlıkla
     # kırpılmaz (virgül cümle olduğunun işaretidir).
     r"^\s*(?:\d+(?:\.\d+)*\.?\s*)?"
     r"(?:madde|m[üu]stahzar|kar[ıi][şs][ıi]m|preparat|[üu]r[üu]n|malzeme|"
-    r"tan[ıi]mlama|kullan[ıi]m|uygulama|belirlenmi[şs]|tavsiye)"
+    r"tan[ıi]mlama|kullan[ıi]m|uygulama|belirlenmi[şs]|tavsiye|ana)"
     r"[^:\n,]{0,45}:\s*",
+    # JENERİK KULLANIM KATEGORİSİ ÖNEKİ — "Endüstriyel Kullanım için
+    # Organik boya" / "Endüstriyel kullanım. Bilimsel araştırma" /
+    # "Endüstriyel Kullanım, Gıda ve Sanayi sektörü". Kategori ürünün
+    # fonksiyonu değildir; ARDINDAN GELEN asıl açıklama korunur.
+    # (Kategori TEK BAŞINA ise _fonksiyon_gecersiz onu zaten reddeder.)
+    r"^\s*(?:end[üu]striyel|profesyonel|sanayi|t[üu]ketici|mesleki|"
+    r"industrial|professional|consumer)\s+kullan[ıi]m\w*\s*"
+    r"(?:i[çc]in|,|\.|:|;|-|–)\s+",
+]
+
+# Değer "veri yok" anlamına geliyorsa fonksiyon bilgisi YOKTUR -> "-" yazılır.
+_VERI_YOK = [
+    r"^mevcut\s+de[ğg]il", r"^bilgi\s+yok", r"^veri\s+yok",
+    r"^bulunmayan\s+bilgiler", r"^belirtilmemi[şs]", r"^bilinmiyor",
+    r"^not\s+available", r"^no\s+data", r"^n\s*/\s*a$", r"^-+$",
 ]
 
 
@@ -513,8 +535,9 @@ def _fonksiyon_temizle(val: str):
             if yeni != val and yeni.strip():
                 val = yeni
                 break
-    # Sütun hizalamasından gelen çoklu boşlukları teke indir.
-    val = re.sub(r"\s{2,}", " ", val).strip().strip("-–:").strip()
+    # Sütun hizalamasından gelen çoklu boşlukları teke indir; baştaki/
+    # sondaki artık noktalama işaretlerini (nokta, tire, iki nokta) at.
+    val = re.sub(r"\s{2,}", " ", val).strip().strip("-–:.").strip()
     return val or None
 
 
@@ -548,10 +571,11 @@ _ETIKET_SATIRI = [
 
 
 def _fonksiyon_gecersiz(val: str) -> bool:
-    """Değer jenerik bir kullanım kategorisi mi, yoksa etiket satırının
-    kendisi mi? Öyleyse fonksiyon değeri sayılmaz (sonraki desen denenir)."""
+    """Değer jenerik bir kullanım kategorisi mi, etiket satırının kendisi
+    mi, yoksa 'veri yok' anlamına mı geliyor? Öyleyse fonksiyon değeri
+    sayılmaz (sonraki desen denenir, hiçbiri tutmazsa hücreye "-" yazılır)."""
     d = re.sub(r"\s+", " ", str(val or "")).strip().strip(":").strip()
-    for p in _JENERIK_KULLANIM + _ETIKET_SATIRI:
+    for p in _JENERIK_KULLANIM + _ETIKET_SATIRI + _VERI_YOK:
         if re.match(p, d, re.IGNORECASE):
             return True
     return False
