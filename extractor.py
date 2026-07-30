@@ -518,6 +518,45 @@ def _fonksiyon_temizle(val: str):
     return val or None
 
 
+# "Fonksiyonu" sütununa YAZILMAMASI gereken JENERİK kullanım kategorileri.
+# Bunlar ECHA maruziyet kategorileridir (kimi kullanıyor: sanayi/profesyonel/
+# tüketici), ürünün NE İŞE YARADIĞINI söylemezler. MSDS Bölüm 1.2'de
+# genellikle "Ana kullanım kategorisi : Endüstriyel kullanım" satırında
+# geçerler ve asıl fonksiyon ("Maddenin/karışımın kullanımı : Reaktif boyar
+# madde") BİR ALT satırdadır.
+_JENERIK_KULLANIM = [
+    r"^end[üu]striyel\s+kullan[ıi]m\w*$",
+    r"^sanayi(?:de)?\s+kullan[ıi]m\w*$",
+    r"^profesyonel\s+kullan[ıi]m\w*$",
+    r"^t[üu]ketici\s+kullan[ıi]m\w*$",
+    r"^mesleki\s+kullan[ıi]m\w*$",
+    r"^industrial\s+use\w*$",
+    r"^professional\s+use\w*$",
+    r"^consumer\s+use\w*$",
+]
+
+# Değerin kendisi bir ETİKET ise (satır kaymasıyla etiket satırı değer
+# sanılmışsa) reddedilir.
+_ETIKET_SATIRI = [
+    r"^ana\s+kullan[ıi]m\s+kategorisi$",
+    r"^madde(?:nin)?\s*/\s*kar[ıi][şs][ıi]m[ıi]n\s+kullan[ıi]m[ıi]?$",
+    r"^tan[ıi]mlama\s*/\s*kullan[ıi]m[ıi]?$",
+    r"^kullan[ıi]m\s+alan[ıi]$",
+    r"^belirlenmi[şs]\s+kullan[ıi]mlar[ıi]?$",
+    r"^tavsiye\s+edilmeyen\s+kullan[ıi]mlar[ıi]?$",
+]
+
+
+def _fonksiyon_gecersiz(val: str) -> bool:
+    """Değer jenerik bir kullanım kategorisi mi, yoksa etiket satırının
+    kendisi mi? Öyleyse fonksiyon değeri sayılmaz (sonraki desen denenir)."""
+    d = re.sub(r"\s+", " ", str(val or "")).strip().strip(":").strip()
+    for p in _JENERIK_KULLANIM + _ETIKET_SATIRI:
+        if re.match(p, d, re.IGNORECASE):
+            return True
+    return False
+
+
 def extract_fonksiyon(text: str):
     """Bölüm 1.2'den ürünün kullanım amacını/fonksiyonunu çıkarır.
 
@@ -527,6 +566,18 @@ def extract_fonksiyon(text: str):
     metni dönsün, aksi halde None (elle doldurulacak) dönülür."""
     bolum1 = find_section_text(text, 1, 2) or text[:3000]
     patterns = [
+        # EN YÜKSEK ÖNCELİK — "Maddenin/karışımın kullanımı : Reaktif boyar
+        # madde". Bu etiket ürünün GERÇEK fonksiyonunu verir ve aynı 1.2
+        # bloğunda yer alan "Ana kullanım kategorisi" (Endüstriyel/
+        # Profesyonel kullanım) etiketinden ÖNCE denenmelidir -- yoksa
+        # jenerik kategori değeri fonksiyon sanılıyordu.
+        # Etiket, ":" ve değer AYRI SATIRLARDA olabilir:
+        #     Maddenin/karışımın kullanımı
+        #     :
+        #     Reaktif boyar madde
+        # Bu yüzden aralarda serbest satır sonu tolere edilir.
+        r"(?i)Madde(?:nin)?\s*/\s*" + _esnek_desen("karışımın") + r"\s+"
+        + _esnek_desen("kullanımı") + r"\s*:?\s*\n?\s*:?\s*\n?\s*([^\n]{3,200})",
         r"(?m)^\s*" + _esnek_desen("Belirlenmiş kullanımlar") + r"\b\s*:?\s*\n?\s*([^\n]{3,80})",
         r"(?m)^\s*" + _esnek_desen("Kullanım alanı") + r"\b\s*:\s*([^\n]{3,80})",
         # "| Kullanım Alanı | : Endüstriyel Kullanım için Organik boya. |"
@@ -553,6 +604,7 @@ def extract_fonksiyon(text: str):
         # kullanımlar" ALT BAŞLIĞININ KENDİSİNİ yanlışlıkla fonksiyon
         # metni sanıyordu.
         r"Ana\s+kullan[ıi]m\s+kategorisi\s*\|\s*:?\s*([^\n|]{3,150})\s*\|",
+        r"Ana\s+kullan[ıi]m\s+kategorisi\s*:?\s*\n?\s*:?\s*\n?\s*([^\n]{3,150})",
         # HABAŞ tarzı şablon: başlık satırın ortasında geçiyor ("1.2.
         # Madde veya Karışımın Belirlenmiş Kullanımları ve Tavsiye
         # Edilmeyen Kullanımları") ve değer doğrudan ALT satırda, ayrı
@@ -579,6 +631,11 @@ def extract_fonksiyon(text: str):
             # aşağıdaki başlık/İngilizce elemeleri gerçek değere uygulansın.
             val = _fonksiyon_temizle(val)
             if not val:
+                continue
+            # Jenerik kullanım kategorisi ("Endüstriyel kullanım") veya
+            # etiket satırının kendisi ("Ana kullanım kategorisi") ise bu
+            # fonksiyon DEĞİLDİR -- sıradaki deseni dene.
+            if _fonksiyon_gecersiz(val):
                 continue
             # "1.2.1" / "1.3" gibi bir sonraki bölüm başlık numarası
             # yakalanmışsa bu değer değildir, atla.
@@ -675,6 +732,18 @@ def extract_uretici(text: str):
     edilebilir; app'te fallback yaparız)."""
     bolum1 = find_section_text(text, 1, 2) or text[:3000]
     patterns = [
+        # EN YÜKSEK ÖNCELİK — "Maddenin/karışımın kullanımı : Reaktif boyar
+        # madde". Bu etiket ürünün GERÇEK fonksiyonunu verir ve aynı 1.2
+        # bloğunda yer alan "Ana kullanım kategorisi" (Endüstriyel/
+        # Profesyonel kullanım) etiketinden ÖNCE denenmelidir -- yoksa
+        # jenerik kategori değeri fonksiyon sanılıyordu.
+        # Etiket, ":" ve değer AYRI SATIRLARDA olabilir:
+        #     Maddenin/karışımın kullanımı
+        #     :
+        #     Reaktif boyar madde
+        # Bu yüzden aralarda serbest satır sonu tolere edilir.
+        r"(?i)Madde(?:nin)?\s*/\s*" + _esnek_desen("karışımın") + r"\s+"
+        + _esnek_desen("kullanımı") + r"\s*:?\s*\n?\s*:?\s*\n?\s*([^\n]{3,200})",
         r"(?i)Üretici\s+Firma\s+Ad[ıi]\s*:?\s*\n?\s*([^\n]{3,90})",
         r"(?i)Üretici\s+Firma\s*\n\s*([^\n]{3,90})",
         r"(?i)Üretici\s*:?\s*\n?\s*([^\n]{3,90})",
@@ -702,6 +771,18 @@ def extract_urun_kodu(text: str):
     'Article No', 'Katalog No' gibi etiketli değerler."""
     bolum1 = find_section_text(text, 1, 2) or text[:3000]
     patterns = [
+        # EN YÜKSEK ÖNCELİK — "Maddenin/karışımın kullanımı : Reaktif boyar
+        # madde". Bu etiket ürünün GERÇEK fonksiyonunu verir ve aynı 1.2
+        # bloğunda yer alan "Ana kullanım kategorisi" (Endüstriyel/
+        # Profesyonel kullanım) etiketinden ÖNCE denenmelidir -- yoksa
+        # jenerik kategori değeri fonksiyon sanılıyordu.
+        # Etiket, ":" ve değer AYRI SATIRLARDA olabilir:
+        #     Maddenin/karışımın kullanımı
+        #     :
+        #     Reaktif boyar madde
+        # Bu yüzden aralarda serbest satır sonu tolere edilir.
+        r"(?i)Madde(?:nin)?\s*/\s*" + _esnek_desen("karışımın") + r"\s+"
+        + _esnek_desen("kullanımı") + r"\s*:?\s*\n?\s*:?\s*\n?\s*([^\n]{3,200})",
         r"(?i)Ürün\s+Kodu\s*:?\s*([A-Za-z0-9][\w\-./]{1,40})",
         r"(?i)Ürün\s+No\.?\s*:?\s*([A-Za-z0-9][\w\-./]{1,40})",
         r"(?i)Product\s+Code\s*:?\s*([A-Za-z0-9][\w\-./]{1,40})",
