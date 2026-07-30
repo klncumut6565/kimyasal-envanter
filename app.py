@@ -27,8 +27,10 @@ if "tmp_dir" not in st.session_state:
     st.session_state.tmp_dir = tempfile.mkdtemp(prefix="kimyasal_envanter_")
 if "urunler" not in st.session_state:
     st.session_state.urunler = {}  # key: pdf dosya adı -> dict
-if "sonuc_dosyasi" not in st.session_state:
-    st.session_state.sonuc_dosyasi = None
+if "sonuc_xlsx" not in st.session_state:
+    st.session_state.sonuc_xlsx = None
+if "sonuc_zip" not in st.session_state:
+    st.session_state.sonuc_zip = None
 if "sonuc_mesajlari" not in st.session_state:
     st.session_state.sonuc_mesajlari = []
 
@@ -203,20 +205,40 @@ def render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix, v
                     if os.path.exists(abs_pdf):
                         zf.write(abs_pdf, pdf_rel)
 
-        st.session_state.sonuc_dosyasi = zip_path
+        st.session_state.sonuc_xlsx = out_path if os.path.exists(out_path) else None
+        st.session_state.sonuc_zip = zip_path
 
     for tip, mesaj in st.session_state.sonuc_mesajlari:
         getattr(st, tip)(mesaj)
 
-    if st.session_state.sonuc_dosyasi and os.path.exists(st.session_state.sonuc_dosyasi):
-        with open(st.session_state.sonuc_dosyasi, "rb") as f:
-            st.download_button(
-                "⬇️ Güncellenmiş Envanter + MSDS PDF'leri (ZIP) İndir",
-                data=f.read(),
-                file_name=zip_adi,
-                mime="application/zip",
-                key=f"download_btn_{key_suffix}",
-            )
+    # ── İKİ İNDİRME SEÇENEĞİ ────────────────────────────────────────────
+    # 1) Sadece güncellenmiş Excel (xlsx)
+    # 2) Güncellenmiş Excel + MSDS PDF'leri (ZIP)
+    xlsx_hazir = st.session_state.sonuc_xlsx and os.path.exists(st.session_state.sonuc_xlsx)
+    zip_hazir  = st.session_state.sonuc_zip and os.path.exists(st.session_state.sonuc_zip)
+
+    if xlsx_hazir or zip_hazir:
+        c1, c2 = st.columns(2)
+        if xlsx_hazir:
+            with c1:
+                with open(st.session_state.sonuc_xlsx, "rb") as f:
+                    st.download_button(
+                        "⬇️ Güncellenmiş Envanter İndir",
+                        data=f.read(),
+                        file_name=dosya_adi,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key=f"download_xlsx_{key_suffix}",
+                    )
+        if zip_hazir:
+            with c2:
+                with open(st.session_state.sonuc_zip, "rb") as f:
+                    st.download_button(
+                        "⬇️ Güncellenmiş Envanter + MSDS PDF'leri (ZIP) İndir",
+                        data=f.read(),
+                        file_name=zip_adi,
+                        mime="application/zip",
+                        key=f"download_zip_{key_suffix}",
+                    )
         st.caption(
             "📌 ZIP'i açtığınızda **Excel dosyasını ve `MSDS_PDFler/` klasörünü "
             "AYNI konuma çıkarın.** Kimyasal adına Excel'de tıkladığınızda "
@@ -450,7 +472,8 @@ with col_clear:
     if st.button("🗑️ Tümünü Temizle (PDF'ler + İnceleme Listesi)"):
         st.session_state.urunler = {}
         st.session_state.pdf_uploader_key += 1  # file_uploader'ı sıfırlamak için
-        st.session_state.sonuc_dosyasi = None
+        st.session_state.sonuc_xlsx = None
+        st.session_state.sonuc_zip = None
         st.session_state.sonuc_mesajlari = []
         st.rerun()
 

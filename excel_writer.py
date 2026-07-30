@@ -505,7 +505,10 @@ def add_products(envanter_path: str, output_path: str, urunler: list,
         if name_col and pdf_relative_paths and i < len(pdf_relative_paths) and pdf_relative_paths[i]:
             _add_pdf_hyperlink(ws, target_row, name_col, pdf_relative_paths[i])
 
-        _auto_fit_row_height(ws, target_row, max_col, ws.row_dimensions[target_row].height)
+        # V1: Tüm veri girilen satırlar sabit 190 yüksekliğe getirilir.
+        # (Önceki _auto_fit_row_height uzun "kapsam dışı" metinlerde satırı
+        #  sebepsiz yere ~409'a şişiriyordu; artık sabit yükseklik uygulanır.)
+        ws.row_dimensions[target_row].height = 190
 
         added_rows.append(target_row)
 
