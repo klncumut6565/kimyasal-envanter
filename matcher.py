@@ -173,9 +173,11 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
         "MSDS/SDS TARİHİ": adr_info.get("revize_tarihi"),
         "ADR-IMDG-IATA": "ADR",  # Bu sütun her zaman sabit "ADR" yazar (durum ne olursa olsun)
         "Cas_No": cas_deger,
-        "Tedarikçi": adr_info.get("tedarikci"),
-        "Fonksiyonu": adr_info.get("fonksiyon"),
-        "Tehlikeli/ Tehlikesiz": adr_info.get("tehlikeli_tehlikesiz"),
+        # Boş alanlara "-" yazılır: PDF'te olmayan bilgi ASLA doldurulmaz
+        # (AI katmanı da _pdf_dogrula ile belgeye bağlanmıştır).
+        "Tedarikçi": adr_info.get("tedarikci") or "-",
+        "Fonksiyonu": adr_info.get("fonksiyon") or "-",
+        "Tehlikeli/ Tehlikesiz": adr_info.get("tehlikeli_tehlikesiz") or "-",
         "H KODLARI": adr_info.get("h_kodlari") or "-",
         "durum": "ok",  # ok | not_in_scope | manual_review
     }
@@ -454,7 +456,7 @@ def build_inventory_row_v3(adr_info: dict, kimyasal_adi: str):
     cas_deger = _cas_listesi_hucre_formati(adr_info.get("cas_listesi")) or adr_info.get("cas_no") or "-"
     row = {
         "Kimyasal Üretici Firma Adı":       adr_info.get("uretici") or adr_info.get("tedarikci"),
-        "Kimyasal Tedarikçi Firma Adı":     adr_info.get("tedarikci"),
+        "Kimyasal Tedarikçi Firma Adı":     adr_info.get("tedarikci") or "-",
         "KODU":                              None,  # manuel (elle doldurulacak)
         "KİMYASAL ADI":                      kimyasal_adi,
         "GELEN LOT BİLGİSİ":                 None,  # manuel

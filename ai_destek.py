@@ -53,8 +53,8 @@ except Exception:
 ALAN_ACIKLAMALARI = {
     # ═══ V1/V2 alanları ═══
     "tedarikci": "Tedarikçi firma adı — MSDS'in Bölüm 1.3'ündeki 'Tedarikçi' veya 'Firma Adı' altında görünen firma. Üreticiden farklıysa satıcı/distribütör firmadır. Sadece firma adını dön (adres, telefon YAZMA).",
-    "fonksiyon": "Ürünün kullanım amacı / fonksiyonu — MSDS Bölüm 1.2 'Belirlenmiş Kullanımlar' altındaki metin (örn: 'Tekstilde boyama işlemi için pH düzenleyici', 'Metal yüzey temizleyici').",
-    "cas_no": "CAS numarası (Bölüm 3), format: 000-00-0. Karışım ürünlerde ana/ilk bileşenin CAS'i. Tek maddeli ürünlerde Bölüm 1'deki CAS'i döndür.",
+    "fonksiyon": "Ürünün kullanım amacı — SADECE MSDS Bölüm 1.2 'Belirlenmiş Kullanımlar' altında YAZAN metni BİREBİR kopyala. Kendi bilginle kullanım alanı EKLEME, listeyi genişletme. Bölüm 1.2 yoksa null dön.",
+    "cas_no": "CAS numarası — SADECE belgede (Bölüm 3 veya Bölüm 1) YAZAN CAS. Format: 000-00-0. Karışımlarda ana/ilk bileşenin CAS'i. Belgede CAS yazmıyorsa null dön; kimyasalı tanıyor olsan bile ezberden CAS YAZMA.",
     "h_kodlari": "H kodları (Bölüm 2), virgülle ayrılmış liste. Örn: 'H302, H315, H319'. EUH kodları da dahil edilebilir (EUH031, EUH208 gibi).",
     "tehlikeli_tehlikesiz": "Ürün 'Tehlikeli' mi 'Tehlikesiz' mi (Bölüm 2 sınıflandırmasına göre). SADECE bu iki değerden birini dön.",
     "tehlike_etiketi": "Uyarı/işaret kelimesi (Bölüm 2.2). SADECE 'Tehlike' veya 'Dikkat' değerlerinden birini dön.",
@@ -62,7 +62,7 @@ ALAN_ACIKLAMALARI = {
     # ═══ V3 (Sentez TMGD+İSG) alanları ═══
     "uretici": "Kimyasal ÜRETİCİ firma adı — Bölüm 1'de 'Üretici Firma' veya 'İmalatçı' veya 'Manufacturer' başlığı altındaki firma. Tedarikçiden AYRI olarak belirtilmişse üretici, belirtilmemişse null dön (tedarikçi ile aynıysa null).",
     "urun_kodu": "Ürün kodu / stok kodu — Bölüm 1'deki 'Ürün Kodu', 'Ürün No', 'Product Code', 'Article No', 'Katalog No' gibi etiketlerin değeri (örn: 'KAST015', 'A-1234'). Sadece kod, açıklama YAZMA.",
-    "kimyasalin_turu": "Kimyasalın türü / kategorisi — BÜYÜK HARFLE tek satır (örn: 'TAMPON ASİT', 'ENZİM', 'BOYA', 'PIGMENT', 'DİSPERSAN', 'YÜZEY AKTİF MADDE', 'KATALİZÖR', 'ÇÖZÜCÜ', 'DETERJAN', 'İNDİRGEN', 'YÜKSELTGEN'). Bölüm 1.2'deki kullanım açıklamasına ve Bölüm 3'teki bileşim tipine göre belirle.",
+    "kimyasalin_turu": "Kimyasalın türü / kategorisi — SADECE belgede (Bölüm 1.2 kullanım açıklaması veya Bölüm 3 bileşim tanımı) AÇIKÇA YAZAN tanımı BÜYÜK HARFLE tek satır dön (örn belgede 'tampon asit' yazıyorsa: 'TAMPON ASİT'). Belge bir tür/kategori adı yazmıyorsa TAHMİN ETME, null dön.",
     "msds_dili": "MSDS belgesinin yazıldığı dil — SADECE şunlardan biri: 'TÜRKÇE', 'İNGİLİZCE', 'ALMANCA', 'FRANSIZCA', 'İTALYANCA', 'İSPANYOLCA'. Bölüm başlıkları hangi dilde? ('Güvenlik Bilgi Formu' → TÜRKÇE, 'Safety Data Sheet' → İNGİLİZCE, 'Sicherheitsdatenblatt' → ALMANCA).",
     "cas_listesi": "Karışım ürününün TÜM bileşenlerinin CAS numaraları liste olarak — Bölüm 3'teki bileşim tablosundaki her satırın CAS'i. Format: JSON list, örn: ['64-18-6', '2809-21-4']. Tek maddeli ürünlerde tek elemanlı liste. Bilinmiyorsa boş liste [].",
 }
@@ -171,20 +171,121 @@ def json_ayikla(content) -> dict:
 def _build_tamamlama_prompt(eksik_alanlar: list) -> str:
     """Sadece BELİRLİ eksik alanları soran küçük prompt — tüm MSDS şemasını
     değil, yalnızca ihtiyaç duyulan alanları istediği için hem daha az çıktı
-    tokeni harcar hem de model dikkatini dağıtmaz."""
+    tokeni harcar hem de model dikkatini dağıtmaz.
+
+    KATI BAĞLILIK (grounding): model, kimyasal hakkındaki KENDİ genel
+    bilgisini kullanmamalı; yalnızca verilen belge metninden alıntı
+    yapmalıdır. Envanterin denetime girebilir olması için uydurulan tek bir
+    hücre bile kabul edilemez. Prompt tek başına yeterli güvence değildir;
+    dönen değerler ayrıca _pdf_dogrula() ile belge metnine karşı
+    doğrulanır."""
     aciklamalar = "\n".join(
         f'- "{alan}": {ALAN_ACIKLAMALARI[alan]}' for alan in eksik_alanlar if alan in ALAN_ACIKLAMALARI
     )
     alan_listesi = ", ".join(f'"{a}"' for a in eksik_alanlar if a in ALAN_ACIKLAMALARI)
     return (
-        "Bu bir MSDS/SDS (Malzeme Güvenlik Bilgi Formu) belgesidir. Aşağıdaki metni "
-        "analiz et ve SADECE şu alanları çıkar:\n\n"
+        "Bu bir MSDS/SDS (Malzeme Güvenlik Bilgi Formu) belgesidir. Aşağıdaki "
+        "BELGE METNİ'ni analiz et ve SADECE şu alanları çıkar:\n\n"
         f"{aciklamalar}\n\n"
+        "══════ MUTLAK KURALLAR (İHLAL EDİLEMEZ) ══════\n"
+        "1. SADECE aşağıdaki BELGE METNİ'nde AÇIKÇA YAZAN bilgiyi kullan. "
+        "Değerleri belgeden BİREBİR kopyala.\n"
+        "2. Bu kimyasal hakkındaki KENDİ BİLGİNİ KULLANMA. Eğitim verinden, "
+        "internetten veya genel kimya bilginden HİÇBİR ŞEY EKLEME. "
+        "Bir bilgiyi 'biliyor' olman onu yazmak için gerekçe DEĞİLDİR.\n"
+        "3. TAHMİN ETME, ÇIKARIM YAPMA, TAMAMLAMA YAPMA. Belge bir alanı "
+        "yazmıyorsa o alan YOKTUR.\n"
+        "4. Bir alan belgede açıkça yazmıyorsa değeri MUTLAKA null olsun. "
+        "null yazmak DOĞRU ve İSTENEN cevaptır; uydurulmuş bir değer "
+        "yazmak CİDDİ HATADIR.\n"
+        "5. Alan açıklamalarındaki örnekler yalnızca BİÇİM göstergesidir; "
+        "belgede geçmiyorlarsa cevap olarak KULLANILAMAZ.\n"
+        "6. Belgeden aldığın metni GENİŞLETME, güzelleştirme veya kendi "
+        "cümlelerinle yeniden yazma — olduğu gibi al.\n\n"
         f"SADECE geçerli bir JSON nesnesi döndür, başka hiçbir metin yazma. "
-        f"Anahtarlar TAM OLARAK şunlar olmalı: {alan_listesi}. "
-        "Belgede bir alan gerçekten bulunamıyorsa değerini null yap (uydurma).\n\n"
+        f"Anahtarlar TAM OLARAK şunlar olmalı: {alan_listesi}.\n\n"
         "BELGE METNİ:\n{text}"
     )
+
+
+def _tr_normalize(s) -> str:
+    """Türkçe duyarlı normalizasyon — büyük/küçük harf, aksan ve noktalama
+    farklarını eleyip metin karşılaştırmasını güvenilir kılar."""
+    s = str(s or "").replace("\xa0", " ")
+    for a, b in (("İ", "i"), ("I", "i"), ("ı", "i"), ("Ş", "s"), ("ş", "s"),
+                 ("Ğ", "g"), ("ğ", "g"), ("Ü", "u"), ("ü", "u"),
+                 ("Ö", "o"), ("ö", "o"), ("Ç", "c"), ("ç", "c")):
+        s = s.replace(a, b)
+    s = s.lower()
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+# Alan başına doğrulama modu:
+#   "metin"       -> değer belge metninde GEÇMELİ (birebir ya da yüksek
+#                    kelime örtüşmesi). Geçmiyorsa AI uydurmuştur, atılır.
+#   "kod"         -> H kodu / CAS gibi kod listeleri; her kod tek tek
+#                    belgede aranır, bulunmayan kodlar listeden düşer.
+#   "turetilmis"  -> belgeden ÇIKARILAN sınıflandırma (dil, tehlikeli/
+#                    tehlikesiz). Birebir geçmesi beklenemez, sabit değer
+#                    kümesiyle zaten sınırlıdır; olduğu gibi kabul edilir.
+_DOGRULAMA_MODU = {
+    "tedarikci": "metin",
+    "uretici": "metin",
+    "fonksiyon": "metin",
+    "urun_kodu": "metin",
+    "kimyasalin_turu": "metin",
+    "cas_no": "metin",
+    "revize_tarihi": "metin",
+    "tehlike_etiketi": "metin",
+    "h_kodlari": "kod",
+    "cas_listesi": "kod",
+    "tehlikeli_tehlikesiz": "turetilmis",
+    "msds_dili": "turetilmis",
+}
+
+
+def _pdf_dogrula(alan: str, deger, metin_norm: str):
+    """AI'nın döndürdüğü değeri PDF metnine karşı doğrular.
+
+    NEDEN GEREKLİ: Prompt'ta 'uydurma' demek tek başına yeterli güvence
+    DEĞİLDİR — model kimyasal hakkındaki genel bilgisinden (internet/eğitim
+    verisi) belgede olmayan metin üretebiliyor ve bu, denetime giren bir
+    envanterin doğruluğunu tümden sorgulatıyor. Bu yüzden dönen her değer
+    kod tarafında belge metnine karşı sınanır.
+
+    Dönüş: doğrulanmış değer, ya da bulunamadıysa None (çağıran taraf
+    None'ı '-' olarak yazar)."""
+    mod = _DOGRULAMA_MODU.get(alan, "metin")
+    if mod == "turetilmis":
+        return deger
+
+    if mod == "kod":
+        kodlar = deger if isinstance(deger, list) else [
+            p.strip() for p in re.split(r"[,\n;/]+", str(deger)) if p.strip()]
+        # Kodu belgede birebir ara (H302, 64-18-6 ...). Boşluk/noktalama
+        # farkını tolere etmek için normalize edilmiş metinde arıyoruz.
+        kalan = [k for k in kodlar if _tr_normalize(k) and _tr_normalize(k) in metin_norm]
+        return kalan or None
+
+    # ── mod == "metin" ──
+    d_norm = _tr_normalize(deger)
+    if not d_norm:
+        return None
+    # 1) Birebir geçiyor mu?
+    if d_norm in metin_norm:
+        return deger
+    # 2) Uzun metinlerde (fonksiyon vb.) PDF'ten satır kırılması/boşluk
+    #    farkı olabilir; kelime örtüşme oranına bakılır. %85'in altı =
+    #    belgede olmayan içerik üretilmiş demektir -> reddedilir.
+    kelimeler = [k for k in d_norm.split() if len(k) >= 3]
+    if not kelimeler:
+        return deger if d_norm in metin_norm else None
+    metin_kelimeleri = set(metin_norm.split())
+    bulunan = sum(1 for k in kelimeler if k in metin_kelimeleri)
+    if bulunan / len(kelimeler) >= 0.85:
+        return deger
+    return None
 
 
 def _call_openai_compatible(api_key: str, model: str, base_url: str,
@@ -526,6 +627,9 @@ def tamamla_eksik_alanlar(text: str, mevcut: dict, chain: list, models: dict, ke
     }
 
     guncelleme = {}
+    # Belge metni bir kez normalize edilir (her alan için tekrar tekrar
+    # normalize etmemek için) — _pdf_dogrula bunu kullanır.
+    metin_norm = _tr_normalize(text)
     for k in eksikler:
         v = sonuc.get(k)
         if v is None:
@@ -541,6 +645,7 @@ def tamamla_eksik_alanlar(text: str, mevcut: dict, chain: list, models: dict, ke
                 continue
             # Sadece geçerli CAS formatı olanları kabul (000-00-0)
             temiz = [c for c in temiz if re.fullmatch(r"\d{2,7}-\d{2}-\d", c)]
+            temiz = _pdf_dogrula(k, temiz, metin_norm)   # belgede geçmeyen CAS'i at
             if temiz:
                 guncelleme[k] = temiz
             continue
@@ -559,5 +664,10 @@ def tamamla_eksik_alanlar(text: str, mevcut: dict, chain: list, models: dict, ke
 
         # Diğer alanlar: string
         if isinstance(v, str) and v.strip() and v.strip().lower() not in _GECERSIZ:
-            guncelleme[k] = v.strip()
+            dogrulanmis = _pdf_dogrula(k, v.strip(), metin_norm)
+            if dogrulanmis is None:
+                # Belgede geçmiyor -> AI uydurmuş. Alan boş bırakılır,
+                # matcher bu alanı "-" olarak yazar.
+                continue
+            guncelleme[k] = dogrulanmis
     return guncelleme
