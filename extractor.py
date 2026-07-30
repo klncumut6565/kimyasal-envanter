@@ -171,10 +171,15 @@ def extract_revize_tarihi(text: str):
     tarih_degeri = r"(\d{1,2}[./]\d{1,2}[./]\d{2,4}|\d{1,2}\s+\w+\s+\d{4})"
     patterns = [
         r"Reviz\w*\b.{0,15}[Tt]arih\w*\s*:?\s*" + tarih_degeri,
+        r"\bRev\.\s*[Tt]arihi\s*[\s|]*:?[\s|]*" + tarih_degeri,  # "Rev. Tarihi : 23.11.2012" kısaltması
         r"Yeni\s+düzen\w*\s+tarihi\s*:?\s*" + tarih_degeri,
-        r"Yay[ıi]n\s*[Tt]arihi\s*:?\s*" + tarih_degeri,
+        r"Yay[ıi]n\s*[Tt]arihi\s*[\s|]*:?[\s|]*" + tarih_degeri,
+        r"Yay[ıi]nlanma\s*[Tt]arihi\s*:?\s*" + tarih_degeri,  # "Yayınlanma Tarihi:08.03.2019" (FOURKIM şablonu)
+        r"G[öo]zden\s+geçirme\s+[Tt]arihi\s*:?\s*" + tarih_degeri,  # "Gözden geçirme tarihi: 27.11.2020" (Mavagen)
         r"\bRevision\s*:?\s*" + tarih_degeri,  # İngilizce MSDS
         r"\bRevision\s+Date\s*:?\s*" + tarih_degeri,  # "Revision Date: 12.12.2020" sütun formatı
+        r"Reviewed\s+on\s*:?\s*" + tarih_degeri,  # "Reviewed on: 05.04.2017" İngilizce şablon
+        r"Rev\d*\.?\s*\(\s*" + tarih_degeri + r"\s*\)",  # "Rev.1 (26.05.2016)" / "Rev1. (26.05.2016)" (Lefasol/SDS kod şablonu)
         # BASF formatı: "Tarih / gözden geçirilme tarihi: 31.01.2018"
         r"[Tt]arih\s*/\s*gözden\s+geçirilme\s+tarihi\s*:\s*" + tarih_degeri,
         # Setaş/Setas formatı: "Güncelleme tarihi: 23.03.2023"
@@ -183,11 +188,24 @@ def extract_revize_tarihi(text: str):
         # yok, "Yeni" öneki de yok -- ayrı bir desen gerekiyor çünkü
         # "Yeni\s+düzen\w*\s+tarihi" bunu yakalamıyor).
         r"\bD[üu]zenleme\s+[Tt]arihi\s*:?\s*" + tarih_degeri,
+        # "Düzenlenme Tarihi / Revizyon No:01.02.2022/03" -- Dyteks/ANTIQ
+        # şablonu, revizyon tarihi ve numarası TEK alanda "tarih/no" olarak
+        # birleşik yazılıyor; tarih kısmını al.
+        r"D[üu]zenlenme\s+[Tt]arihi\s*/\s*Revizyon\s+No\s*:?\s*" + tarih_degeri,
     ]
     for p in patterns:
         m = re.search(p, text, re.IGNORECASE)
         if m:
             return m.group(1).strip()
+    # Son çare: "Hazırlanma Tarihi : 19.04.2018" -- gerçek bir revizyon/
+    # yayın tarihi hiçbir yerde bulunamadıysa, belgenin hazırlanma
+    # tarihi de MSDS'in "yaşını" göstermek için makul bir yedektir.
+    m = re.search(r"Haz[ıi]rlan?ma\s+[Tt]arihi\s*:?\s*" + tarih_degeri, text, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r"\bHaz\.\s*[Tt]arihi\s*[\s|]*:?[\s|]*" + tarih_degeri, text, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
     return None
 
 
@@ -203,6 +221,7 @@ def _urun_adi_kirp(name: str) -> str:
         r"\b1\.3\b", r"Tanımlanmış\s+kullan", r"Kullanım\s+alan",
         r"\bBÖLÜM\s+2\b", r"Tavsiye\s+edilen", r"Tavsiye\s+edilmeyen",
         r"Tan[ıi]m[ıi]n\s+başka", r"\bEşanlamlı",
+        r"\bChemical\s+Structure\b", r"\bCAS\s*#",
     ]
     en_erken = len(name)
     for isaretci in isaretciler:
@@ -457,16 +476,25 @@ def _esnek_desen(kelime: str) -> str:
 
 def extract_fonksiyon(text: str):
     """Bölüm 1.2'den ürünün kullanım amacını/fonksiyonunu çıkarır.
-    
-    KRITIK: Başlık numaralandırması ("1.2.1", "1.3" vb.), 
-    İngilizce metin veya template metinleri değer diye yakalmasın, 
-    sadece Türkçe açıklayıcı fonksiyon metni dönderebilsin."""
+
+    KRİTİK: Başlık numaralandırması ("1.2.1", "1.3" vb.) veya İngilizce
+    metin (kaynak belge Türkçe değilse bile envanterde Türkçe açıklama
+    beklenir) değer diye yakalanmasın; sadece Türkçe açıklayıcı fonksiyon
+    metni dönsün, aksi halde None (elle doldurulacak) dönülür."""
     bolum1 = find_section_text(text, 1, 2) or text[:3000]
     patterns = [
         r"(?m)^\s*" + _esnek_desen("Belirlenmiş kullanımlar") + r"\b\s*:?\s*\n?\s*([^\n]{3,80})",
         r"(?m)^\s*" + _esnek_desen("Kullanım alanı") + r"\b\s*:\s*([^\n]{3,80})",
+        # "| Kullanım Alanı | : Endüstriyel Kullanım için Organik boya. |"
+        # pipe tablo formatı (Dyteks/ANTIQ şablonu) -- yukarıdaki satır-başı
+        # deseni "|" ile başlayan hücreleri yakalayamaz.
+        r"\bKullan[ıi]m\s+Alan[ıi]\s*\|\s*:?\s*([^\n|]{3,150})\s*\|",
+        # "...tavsiye edilmeyen kullanımları Tavsiye edilen kullanım
+        # alanı: Renklendirici/pigment..." -- etiket satır başında değil,
+        # başlık cümlesinin devamında (Alptekindyes/ACRYLA şablonu).
+        r"Tavsiye\s+edilen\s+kullan[ıi]m\s+alan[ıi]\s*:\s*([^\n]{3,150})",
         r"(?m)^\s*Kullanim\s*:\s*\n?\s*([^\n]{3,80})",
-        r"(?m)^\s*Relevant\s+identified\s+uses\s*:?\s*([^\n]{3,80})",  # İngilizce MSDS
+        r"Relevant\s+identified\s+uses\s*:\s*([^\n]{3,120})",  # İngilizce MSDS (satır başında olmayabilir)
         # "...belirlenmiş kullanımları ve tavsiye edilmeyen kullanımları
         # Madde/Karışımın kullanımı : Tekstil ..." -- başlık ve değer AYNI
         # satırda (CHT şablonu). Bu deseni, aşağıdaki genel/greedy son
@@ -474,6 +502,13 @@ def extract_fonksiyon(text: str):
         # devamı" sayıp yutuyor, sonra YANLIŞLIKLA bir sonraki satırı
         # (örn. "1.3 Güvenlik bilgi formu...") fonksiyon diye yakalıyordu.
         r"(?i)Madde\s*/\s*" + _esnek_desen("Karışımın") + r"\s+" + _esnek_desen("kullanımı") + r"\s*:\s*([^\n]{3,200})",
+        # "1.2.1. Tanımlanmış uygun kullanımlar\n\n| Ana kullanım kategorisi
+        # | : Renklendirici/pigment... |" (Alptekindyes/ACRYLA/VINAZOL/POLY
+        # şablonu). Bu deseni HABAŞ-tarzı genel yakalamadan (aşağıda) ÖNCE
+        # deniyoruz -- yoksa o genel desen "1.2.1. Tanımlanmış uygun
+        # kullanımlar" ALT BAŞLIĞININ KENDİSİNİ yanlışlıkla fonksiyon
+        # metni sanıyordu.
+        r"Ana\s+kullan[ıi]m\s+kategorisi\s*\|\s*:?\s*([^\n|]{3,150})\s*\|",
         # HABAŞ tarzı şablon: başlık satırın ortasında geçiyor ("1.2.
         # Madde veya Karışımın Belirlenmiş Kullanımları ve Tavsiye
         # Edilmeyen Kullanımları") ve değer doğrudan ALT satırda, ayrı
@@ -481,27 +516,31 @@ def extract_fonksiyon(text: str):
         # değer "1.2.1." / "1.3" gibi başlık numarası İÇERMESİN.
         r"(?i)Belirlenmi[şs]\s+[Kk]ullan[ıi]mlar[ıi]?\b[^\n]*\n\s*([^\n]{3,200})",
     ]
+    # İngilizce fonksiyon metnini eleyen anahtar kelimeler -- kaynak belge
+    # İngilizce olsa bile bu alanda Türkçe açıklama beklenir; İngilizce
+    # yakalanırsa None dönülür (elle doldurulur) ham İngilizce metin
+    # gösterilmez.
+    _ingilizce_anahtar = (
+        r"\b(?:used|for|bleaching|material|fabric|washing|dyeing|finishing|"
+        r"printing|textile|coating|chemical|process|treatment|as a|such as)\b"
+    )
     for p in patterns:
         m = re.search(p, bolum1, re.IGNORECASE)
         if m:
             val = m.group(1).strip().rstrip(".")
-            # Başlık numarası veya sonraki bölüm başlığı yakalanmışsa atla
-            if val and not re.match(r"^\d+\.\d+", val) and not val.startswith("1."):
-                # ÖNEMLİ: İngilizce metin KONTROL ET
-                # Common İngilizce keywords — bulunursa, değer İngilizce
-                ing_keywords = [
-                    r"\b(?:used|for|bleaching|material|fabric|washing|dyeing|finishing|"
-                    r"printing|textile|coating|chemical|process|treatment|as a|such as)\b"
-                ]
-                is_english = any(re.search(kw, val, re.IGNORECASE) for kw in ing_keywords)
-                
-                if not is_english:
-                    # Türkçe veya karışık metin — döndür
-                    return val
-                # else: İngilizce metin, sonraki pattern'e devam et
-            elif val and "Tanımlanmış" in val and len(val) < 20:
-                # "Tanımlanmış uygun kullanımlar" gibi başlık başı yakalandı, atla
+            if not val:
                 continue
+            # "1.2.1" / "1.3" gibi bir sonraki bölüm başlık numarası
+            # yakalanmışsa bu değer değildir, atla.
+            if re.match(r"^\d+\.\d+", val) or val.startswith("1."):
+                continue
+            # "Tanımlanmış uygun kullanımlar" gibi alt başlığın kendisi
+            # yakalanmışsa atla.
+            if "Tanımlanmış" in val and len(val) < 20:
+                continue
+            if re.search(_ingilizce_anahtar, val, re.IGNORECASE):
+                continue  # İngilizce metin -- sıradaki desene geç
+            return val
     return None
 
 
