@@ -474,6 +474,50 @@ def _esnek_desen(kelime: str) -> str:
     return "".join(degisenler.get(ch, re.escape(ch)) for ch in kelime)
 
 
+# Fonksiyon değerinin BAŞINA yapışmış etiket kalıntılarını temizleyen
+# desenler. Bazı şablonlarda etiket ile değer AYNI SATIRDA olduğu için
+# (sütun hizalı tablo ya da "etiket : değer" tek satır) yakalanan grup
+# etiketi de içeriyordu:
+#     "Madde/Müstahzarın : Tekstil boyaları, finisyon ve baskı ürünleri"
+#     "Tanımlama/Kullanım    Nötrleştirici asit"
+# Doğrusu yalnızca değerdir. Etiketin envantere yazılması hücreyi hatalı
+# gösteriyordu.
+_FONKSIYON_ETIKET_ONEKLERI = [
+    # "Tanımlama/Kullanım <değer>" — iki nokta YOK, sütun boşluğu var.
+    r"^\s*(?:tan[ıi]mlama|kullan[ıi]m)\s*/\s*(?:kullan[ıi]m[ıi]?|tan[ıi]mlama)\s*:?\s+",
+    # "Madde/Müstahzarın Kullanımı <değer>" / "Madde/Karışımın kullanımı <değer>"
+    r"^\s*madde\s*/\s*(?:m[üu]stahzar[ıi]n|kar[ıi][şs][ıi]m[ıi]n)\s*(?:kullan[ıi]m[ıi]?)?\s*:?\s+",
+    # Genel: bilinen bir etiket kelimesiyle BAŞLAYIP ":" ile biten kısa
+    # önek. Önekte VİRGÜL olmamalı — böylece "Ürün, tekstil boyamada
+    # kullanılır: özellikle pamukta" gibi GERÇEK bir cümle yanlışlıkla
+    # kırpılmaz (virgül cümle olduğunun işaretidir).
+    r"^\s*(?:\d+(?:\.\d+)*\.?\s*)?"
+    r"(?:madde|m[üu]stahzar|kar[ıi][şs][ıi]m|preparat|[üu]r[üu]n|malzeme|"
+    r"tan[ıi]mlama|kullan[ıi]m|uygulama|belirlenmi[şs]|tavsiye)"
+    r"[^:\n,]{0,45}:\s*",
+]
+
+
+def _fonksiyon_temizle(val: str):
+    """Yakalanan fonksiyon metninden etiket önekini ve fazla boşlukları
+    temizler. Temizlik sonrası anlamlı bir değer kalmazsa None döner
+    (böylece bir sonraki desen denenir, etiket envantere yazılmaz)."""
+    if not val:
+        return None
+    onceki = None
+    # Birden fazla önek üst üste gelebilir; değişim durana kadar tekrarla.
+    while onceki != val:
+        onceki = val
+        for p in _FONKSIYON_ETIKET_ONEKLERI:
+            yeni = re.sub(p, "", val, count=1, flags=re.IGNORECASE)
+            if yeni != val and yeni.strip():
+                val = yeni
+                break
+    # Sütun hizalamasından gelen çoklu boşlukları teke indir.
+    val = re.sub(r"\s{2,}", " ", val).strip().strip("-–:").strip()
+    return val or None
+
+
 def extract_fonksiyon(text: str):
     """Bölüm 1.2'den ürünün kullanım amacını/fonksiyonunu çıkarır.
 
@@ -528,6 +572,12 @@ def extract_fonksiyon(text: str):
         m = re.search(p, bolum1, re.IGNORECASE)
         if m:
             val = m.group(1).strip().rstrip(".")
+            if not val:
+                continue
+            # Etiket kalıntısını ("Madde/Müstahzarın :", "Tanımlama/Kullanım")
+            # değerin başından temizle -- bu kontrollerden ÖNCE yapılır ki
+            # aşağıdaki başlık/İngilizce elemeleri gerçek değere uygulansın.
+            val = _fonksiyon_temizle(val)
             if not val:
                 continue
             # "1.2.1" / "1.3" gibi bir sonraki bölüm başlık numarası
