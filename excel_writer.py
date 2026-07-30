@@ -485,6 +485,12 @@ def add_products(envanter_path: str, output_path: str, urunler: list,
     no_col = col_map.get(_norm("No"), 1)
     name_col = col_map.get(_norm("Kimyasal Adı"))
 
+    # V1: CAS No sütunu sabit 12 genişlikte olmalı (şablonda 9.71 geliyor,
+    # multi-CAS değerlerinde dar kalıyordu).
+    cas_col = col_map.get(_norm("Cas_No"))
+    if cas_col:
+        ws.column_dimensions[get_column_letter(cas_col)].width = 12
+
     n = len(urunler)
     insert_at = last_data_row + 1
     _shift_rows_down(ws, footer_row, ws.max_row, n, max_col)
