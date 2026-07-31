@@ -337,8 +337,70 @@ def _pipe_satir_deger(line: str) -> str:
     return _pipe_ilk_hucre(line)
 
 
+# Tedarikçi değeri olarak KABUL EDİLEMEZ kalıntılar. Bir desen etiketin
+# kendisini ya da devamını yakalarsa hücrede firma adı yerine bunlar
+# görünüyordu (örn. "/Üretici Tanımı").
+_TEDARIKCI_GECERSIZ = [
+    r"^[/\\|,;:.\-–\s]",                       # "/Üretici Tanımı" gibi ayraçla başlayan
+    r"^(?:[üu]retici|tedarik[çc]i|firma|[şs]irket|imalat[çc][ıi])\b"
+    r"[^\n]{0,25}(?:tan[ıi]m[ıi]?|bilgiler[ıi]?|ad[ıi]|unvan[ıi]?)\s*$",
+    r"^(?:tan[ıi]m[ıi]?|bilgiler[ıi]?|ad[ıi]|unvan[ıi]?)\s*$",
+    r"^(?:adres|telefon|faks|fax|tel|e-?posta|mail|web)\b",
+    r"^(?:mevcut\s+de[ğg]il|bilgi\s+yok|veri\s+yok|belirtilmemi[şs])",
+]
+
+
+_TEDARIKCI_ETIKET_ONEKI = (
+    r"^\s*(?:[şs]irket|firma|tedarik[çc]i|[üu]retici|imalat[çc][ıi]|"
+    r"company|supplier|manufacturer)"
+    r"(?:\s*/\s*(?:[üu]retici|tedarik[çc]i|supplier|manufacturer))?"
+    r"(?:\s+(?:ad[ıi]|unvan[ıi]?|tan[ıi]m[ıi]?|bilgisi|bilgileri|name))?"
+    r"\s*(?::|\s{2,})\s*"
+)
+
+
+def _tedarikci_temizle(val: str):
+    """Değerin BAŞINA yapışmış etiketi temizler.
+    "Şirket Adı        TEKKİM KİMYA..." -> "TEKKİM KİMYA..."
+    """
+    if not val:
+        return val
+    onceki = None
+    while onceki != val:
+        onceki = val
+        yeni = re.sub(_TEDARIKCI_ETIKET_ONEKI, "", val, count=1, flags=re.IGNORECASE)
+        if yeni.strip():
+            val = yeni
+    return re.sub(r"\s{2,}", " ", val).strip(" :|-–").strip()
+
+
+def _tedarikci_gecersiz(val: str) -> bool:
+    """Değer firma adı mı, yoksa etiket kalıntısı mı?"""
+    d = re.sub(r"\s+", " ", str(val or "")).strip()
+    if len(d) < 3:
+        return True
+    for p in _TEDARIKCI_GECERSIZ:
+        if re.match(p, d, re.IGNORECASE):
+            return True
+    return False
+
+
+def _tedarikci_aday(val):
+    """Adayı temizler ve doğrular; geçerliyse döner, değilse None."""
+    val = _tedarikci_temizle(_pipe_ilk_hucre(val))
+    return None if _tedarikci_gecersiz(val) else val
+
+
 def extract_tedarikci(text: str):
-    """Bölüm 1.3'ten tedarikçi/üretici firma adını çıkarır."""
+    """Bölüm 1.3'ten tedarikçi/üretici firma adını çıkarır.
+
+    Sonuç, etiket kalıntısı olmadığından emin olmak için
+    _tedarikci_gecersiz() ile son bir kez sınanır."""
+    deger = _extract_tedarikci(text)
+    return None if _tedarikci_gecersiz(deger) else deger
+
+
+def _extract_tedarikci(text: str):
     bolum1 = find_section_text(text, 1, 2) or text[:3000]
     # "Firma Adı :" etiketi (örn. HABAŞ şablonu) -- bunu "Tedarikçi"
     # etiketinden ÖNCE deniyoruz çünkü "Tedarikçi" kelimesi genelde
@@ -347,31 +409,57 @@ def extract_tedarikci(text: str):
     # Bilgileri") yanlışlıkla firma adı diye yakalayabilir.
     m = re.search(r"Firma\s+Ad[ıi]\s*:?\s*\n?\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     # "Şirket Unvanı   ERCA GROUP..." sütun formatı — etiket + büyük boşluk + değer
     m = re.search(r"[Şşġ]irket\s+[UÜ]nvan[ıi]\s{2,}([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     # "| Şirket Unvanı | ERCA GROUP... |" / "| Şirket Adı | TEKKİM... |" markdown
     # tablo formatı (tek boşluklu pipe hücreleri -- yukarıdaki 2+ boşluk
     # deseni bunu yakalamaz)
     m = re.search(r"[Şşġ]irket\s+(?:[UÜ]nvan[ıi]|Ad[ıi])\s*\|\s*([^\n|]{3,90})\s*\|", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
+    # "Tedarikçi/Üretici Tanımı : ABC KİMYA" — BİLEŞİK etiket. Aşağıdaki
+    # genel "Tedarikçi" deseni burada "Tedarikçi" kelimesini eşleştirip
+    # etiketin GERİ KALANINI ("/Üretici Tanımı") firma adı sanıyordu.
+    # Etiket, ":" ve değer AYRI SATIRLARDA da olabilir.
+    m = re.search(
+        r"(?:Tedarik[çc]i|[ÜU]retici)\s*/\s*(?:[ÜU]retici|Tedarik[çc]i)"
+        r"(?:\s+(?:Tan[ıi]m[ıi]?|Bilgileri|Ad[ıi]|Firma\w*))?"
+        r"\s*:?\s*\n?\s*:?\s*\n?\s*([^\n]{3,90})",
+        bolum1, re.IGNORECASE)
+    if m and m.group(1).strip():
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     # "Tedarikçi" etiketi -- yalnızca kelime sınırında bittiğinde
     # ("Tedarikçi :" veya "Tedarikçi\n") eşleştiriyoruz; "Tedarikçisinin"
     # gibi bir çekim ekiyle devam ediyorsa bu, başlığın bir parçasıdır,
-    # değer etiketi değildir.
-    m = re.search(r"Tedarikçi\b(?!sinin|nin|si)[\s|]*(?:Firma\w*)?[\s|]*:?[\s|]*([^\n]{3,90})", bolum1, re.IGNORECASE)
+    # değer etiketi değildir. (?!\s*/) ise "Tedarikçi/Üretici ..." gibi
+    # BİLEŞİK etiketleri dışarıda bırakır -- onlar yukarıda ele alınır.
+    m = re.search(r"Tedarikçi\b(?!sinin|nin|si)(?!\s*/)[\s|]*(?:Firma\w*)?[\s|]*:?[\s|]*([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     m = re.search(r"Produc\w*\s+Company\s*\n?\s*([^\n]{3,90})", bolum1, re.IGNORECASE)  # İngilizce MSDS
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     # "Şirket bilgisi: MKS DevO Kimya..." (MKS DevO şablonu)
     m = re.search(r"[Şşġ]irket\s+bilgisi\s*:?\s*([^\n]{3,90})", bolum1)
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     # "| ġirket | : Huntsman Textile Effects |" -- çıplak "Şirket" etiketi,
     # pipe tablo formatında (bazı dönüştürme araçlarında Ş harfi bozuk
     # "ġ" karakterine dönüşüyor). Değer şirket soneki içermeyebilir
@@ -380,22 +468,30 @@ def extract_tedarikci(text: str):
     # yakalayamaz; doğrudan etiket eşleşmesi gerekir.
     m = re.search(r"[Şşġ]irket\s*\|\s*:?\s*([^\n|]{3,90})\s*\|", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     # "Şirket     : Huntsman Textile Effects" -- Huntsman formatı (çok boşluk)
     m = re.search(r"[Şşġ]irket\s+:\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
         deger = m.group(1).strip()
         # "Adres", "Telefon" gibi sonraki etiketler yakalanmadığını kontrol et
         if not re.match(r"(?i)Adres|Telefon|Fax", deger):
-            return _pipe_ilk_hucre(deger)
+            _aday = _tedarikci_aday(deger)
+            if _aday:
+                return _aday
     # "Şirket Adı: Mavi Colour Kimya..." -- pipe olmayan düz metin formatı
     m = re.search(r"[Şşġ]irket\s+Ad[ıi]\s*:\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     # "Manufacturer/ Supplier:\n\nCHT TURKEY..." -- İngilizce MSDS etiketi
     m = re.search(r"(?:Manufacturer\s*/\s*)?Supplier\s*:?[\s|]*([^\n|]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     # "...tedarikçisinin bilgileri Tekay Kimya Mümessillik ve Ticaret Ltd
     # Şti. İstanbul... Tel: +90..." -- başlık ve firma adı/adresi AYNI
     # paragrafta, hiçbir etiket veya "\n" olmadan birleşiyor (Tekay Kimya
@@ -405,57 +501,81 @@ def extract_tedarikci(text: str):
         bolum1, re.IGNORECASE,
     )
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     # "Firmanın Tanıtımı:\n\nMKS & DevO..." (eski MKS DevO / Complexa şablonu)
     m = re.search(r"Firman[ıi]n\s+Tan[ıi]t[ıi]m[ıi]\s*:\s*\n?\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     # "1.3 Şirketin Tanıtımı: YAR-KİM ENDÜSTRİYEL..." (SOL-5 şablonu)
     m = re.search(r"[Şşġ]irketin\s+Tan[ıi]t[ıi]m[ıi]\s*:\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     # "1.3 Üretici Adres: Soda Sanayii A.Ş. ..." (Soda şablonu -- "Adres"
     # etiketine rağmen değer firma adıyla başlıyor)
     m = re.search(r"Üretici\s+Adres\s*:\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     # "...Ayrıntılı Bilgileri Birpa Birlik Paz.Taah.Tic.Ltd.Şti Şirket :
     # Turgut Reis Mah..." -- bu şablonda firma adı "Ayrıntılı Bilgileri"
     # ile "Şirket :" etiketi arasında yer alır (alışılmadık sıra: "Şirket :"
     # etiketinin kendisi ADRES ile devam eder, firma adı değil).
     m = re.search(r"Ayr[ıi]nt[ıi]l[ıi]\s+Bilgileri\s+([^\n]{3,90}?)\s+Şirket\s*:", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     m = re.search(r"1\.3[.\s][^\n]*\n+((?:[^\n]+\n+){0,4})", bolum1)
     if m:
         for line in m.group(1).split("\n"):
             line = line.strip()
             if line and re.search(_COMPANY_SUFFIX, line, re.IGNORECASE):
-                return _pipe_satir_deger(line)
+                # Satır "Şirket Adı   TEKKİM KİMYA ... LTD. ŞTİ" gibi ETİKETLE
+                # başlıyor olabilir; _tedarikci_aday etiketi temizler.
+                _aday = _tedarikci_aday(_pipe_satir_deger(line))
+                if _aday:
+                    return _aday
     # "1.3.1 ... tedarikçi bilgiler ; Firma Adı" — değer etiketle aynı satırda
     m = re.search(r"1\.3\.1[^\n]*tedarik\w*\s+bilgi\w*\s*;\s*([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     # "Mümessil Firma\nFirma Adı" — Türkiye'deki yaygın format (Jay/Tekay şablonu)
     # Mümessil = yerel tedarikçi; üretici firma değil, biz onu alıyoruz.
     for aralik in [bolum1, text[:4000]]:
         m = re.search(r"Mümessil\s+Firma\s*\n?\s*([^\n]{3,90})", aralik, re.IGNORECASE)
         if m and m.group(1).strip():
-            return _pipe_ilk_hucre(m.group(1).strip())
+            _aday = _tedarikci_aday(m.group(1).strip())
+            if _aday:
+                return _aday
     # "Üretici   HANGZHOU..." sütun formatı (MGVB/eski şablon — büyük boşluklu)
     for aralik in [bolum1, text[:2000]]:
         m = re.search(r"Üretici\s{2,}([^\n]{3,90})", aralik, re.IGNORECASE)
         if m and m.group(1).strip():
-            return _pipe_ilk_hucre(m.group(1).strip())
+            _aday = _tedarikci_aday(m.group(1).strip())
+            if _aday:
+                return _aday
         m = re.search(r"Üretici\s+Firma\s*\n\s*([^\n]{3,90})", aralik, re.IGNORECASE)
         if m and m.group(1).strip():
-            return _pipe_ilk_hucre(m.group(1).strip())
+            _aday = _tedarikci_aday(m.group(1).strip())
+            if _aday:
+                return _aday
     # Genel yedek: sadece "Şirket :" (başka özel etiket olmadan) --
     # başlıktaki "şirketin/dağıtıcının kimliği" ile karışmasın diye
     # zorunlu ":" gerektirir (başlıkta hemen ":" gelmez)
     m = re.search(r"\bŞirket\s*:\s*([^\n]{3,90})", bolum1)
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     return None
 
 
@@ -833,7 +953,9 @@ def extract_uretici(text: str):
             # doğrudan "/Tedarikçi" veya "/Tedarikçisinin detayları" gelir
             # -- bu bir değer değil, başlığın devamıdır.
             if not re.match(r"(?i)/?\s*(Tedarikçi|Supplier)|Firma\s+Ad|Adres", deger):
-                return _pipe_ilk_hucre(deger)
+                _aday = _tedarikci_aday(deger)
+                if _aday:
+                    return _aday
     return None
 
 
@@ -988,15 +1110,21 @@ def extract_uyari_kelimesi(text: str):
     bolum2 = find_section_text(text, 2, 3) or text
     m = re.search(r"Uyar[ıi]\s+[Kk]elimesi\s*:?\s*\n?\s*([^\n]{2,30})", bolum2)
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     m = re.search(r"İşaret\s+[Kk]elime\w*\s*:?\s*\n?\s*([^\n]{2,30})", bolum2)
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     # "İşaret Sözcüğü :" etiketi (örn. HABAŞ şablonu) -- "Kelime" yerine
     # eş anlamlı "Sözcük" kelimesi kullanılıyor.
     m = re.search(r"İşaret\s+[Ss]özc[üu][ğg][üu]\s*:?\s*\n?\s*([^\n]{2,30})", bolum2)
     if m and m.group(1).strip():
-        return _pipe_ilk_hucre(m.group(1).strip())
+        _aday = _tedarikci_aday(m.group(1).strip())
+        if _aday:
+            return _aday
     # BASF formatı: "Sinyal kelime:\nTehlike" — etiket alt satırda
     m = re.search(r"Sinyal\s+kelime\s*:?\s*\n?\s*(Tehlike|Dikkat)\b", bolum2, re.IGNORECASE)
     if m:
