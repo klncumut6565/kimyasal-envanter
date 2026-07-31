@@ -638,6 +638,49 @@ def fonksiyon_sec(bolum12_metni: str, chain: list, models: dict, keys: dict,
     return None
 
 
+def fonksiyon_cevir(metin: str, chain: list, models: dict, keys: dict,
+                     ollama_url: str = ""):
+    """İngilizce fonksiyon metnini Türkçeye çevirir.
+
+    SADECE ÇEVİRİ yapar -- yeni bilgi eklemez, genişletmez, yorumlamaz.
+    Bu, envanterin belgeye bağlı kalması kuralını bozmaz: çeviri, belgedeki
+    bilginin dönüştürülmesidir, uydurulması değil. Bu yüzden burada
+    _pdf_dogrula UYGULANMAZ (çevrilmiş metin doğal olarak belgede geçmez);
+    bunun yerine prompt katı tutulur ve çıktı uzunluğu sınırlanır."""
+    if not metin or not chain:
+        return None
+    prompt = (
+        "Aşağıdaki metin bir MSDS/SDS belgesinin 'kullanım/fonksiyon' "
+        "alanından alınmıştır. Bu metni TÜRKÇEYE ÇEVİR.\n\n"
+        "══════ KURALLAR ══════\n"
+        "1. SADECE ÇEVİR. Bilgi EKLEME, genişletme, açıklama yapma.\n"
+        "2. Kimya/tekstil sektörünün yerleşik Türkçe terimlerini kullan "
+        "(örn. 'wetting agent' -> 'ıslatıcı', 'levelling agent' -> "
+        "'egalize maddesi').\n"
+        "3. Çeviri, orijinalle AYNI UZUNLUKTA olmalı; cümle uydurma.\n"
+        "4. Metin zaten Türkçeyse aynen geri döndür.\n\n"
+        'SADECE şu biçimde geçerli JSON döndür: {"ceviri": "<türkçe metin>"}\n\n'
+        "METİN:\n" + metin
+    )
+    try:
+        for eng in chain:
+            try:
+                sonuc = _call_ai(prompt, eng, models.get(eng, ""), ollama_url, keys)
+            except Exception:
+                continue
+            if not isinstance(sonuc, dict):
+                continue
+            c = sonuc.get("ceviri")
+            if isinstance(c, str) and c.strip():
+                c = c.strip().strip(' ,;.-–:"')
+                # Uydurup uzatmasın: orijinalin 2 katını aşmasın.
+                if 2 <= len(c) <= max(40, len(metin) * 2):
+                    return c
+    except Exception:
+        pass
+    return None
+
+
 def tamamla_eksik_alanlar(text: str, mevcut: dict, chain: list, models: dict, keys: dict,
                            ollama_url: str = "") -> dict:
     """extractor.py'nin doldurduğu 'mevcut' sözlüğünü alır, boş kalan alanlar için

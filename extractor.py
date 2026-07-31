@@ -757,21 +757,167 @@ _FONKSIYON_SON_EKLER = (
 )
 
 
-def _fonksiyon_kisalt(val: str) -> str:
-    """Çok maddeli uzun kullanım listelerini ilk maddeye indirir.
+# Çok maddeli kullanım listelerinde hücreye yazılacak kapsayıcı metin.
+FONKSIYON_COKLU_METNI = "YARDIMCI KİMYASAL"
 
-    HABAŞ tarzı gaz MSDS'lerinde Bölüm 1.2 onlarca kullanım alanını tek
-    paragrafta sayar; bunun tamamı envanter hücresine sığmaz ve okunmaz.
-    Ayraç önceliği: ";" (güçlü madde ayracı) > ",".
+# MSDS Bölüm 1.2'de en sık geçen İngilizce kullanım terimlerinin Türkçe
+# karşılıkları. Sözlük ÖNCE denenir (deterministik ve hızlı); burada
+# bulunmayan İngilizce metinler için AI çeviri katmanına düşülür.
+_EN_TR_SOZLUK = {
+    "textile auxiliary": "tekstil yardımcı maddesi",
+    "textile auxiliaries": "tekstil yardımcı maddesi",
+    "textile auxiliary agent": "tekstil yardımcı maddesi",
+    "dyeing auxiliary": "boyama yardımcı maddesi",
+    "optical brightener": "optik beyazlatıcı",
+    "optical brightening agent": "optik beyazlatıcı",
+    "wetting agent": "ıslatıcı",
+    "levelling agent": "egalize maddesi",
+    "leveling agent": "egalize maddesi",
+    "dispersing agent": "dispersan",
+    "sequestering agent": "sekestran",
+    "chelating agent": "şelat yapıcı",
+    "antifoam": "köpük kesici",
+    "anti-foam agent": "köpük kesici",
+    "defoamer": "köpük kesici",
+    "bleaching agent": "ağartıcı",
+    "softener": "yumuşatıcı",
+    "fabric softener": "kumaş yumuşatıcı",
+    "fixing agent": "fikse maddesi",
+    "sizing agent": "haşıl maddesi",
+    "desizing agent": "haşıl sökücü",
+    "binder": "binder",
+    "thickener": "kıvamlaştırıcı",
+    "dyestuff": "boyarmadde",
+    "pigment": "pigment",
+    "surfactant": "yüzey aktif madde",
+    "emulsifier": "emülgatör",
+    "detergent": "deterjan",
+    "cleaning agent": "temizlik maddesi",
+    "lubricant": "yağlayıcı",
+    "corrosion inhibitor": "korozyon önleyici",
+    "scale inhibitor": "kışır önleyici",
+    "antiscalant": "kışır önleyici",
+    "water treatment chemical": "su arıtma kimyasalı",
+    "flame retardant": "güç tutuşurluk maddesi",
+    "preservative": "koruyucu",
+    "biocide": "biyosit",
+    "enzyme": "enzim",
+    "oxidizing agent": "yükseltgen madde",
+    "reducing agent": "indirgen madde",
+    "neutralizing acid": "nötrleştirici asit",
+    "solvent": "çözücü",
+    "catalyst": "katalizör",
+    "stabilizer": "stabilizatör",
+    "stabiliser": "stabilizatör",
+    "laboratory chemical": "laboratuvar kimyasalı",
+    "laboratory chemicals": "laboratuvar kimyasalı",
+    "laboratory reagent": "laboratuvar reaktifi",
+    "industrial use": "endüstriyel kullanım",
+    "for industrial use only": "yalnızca endüstriyel kullanım",
+    "professional use": "profesyonel kullanım",
+    "scientific research and development": "bilimsel araştırma ve geliştirme",
+    "research and development": "araştırma ve geliştirme",
+}
+
+# Metnin İngilizce olduğunu ele veren yaygın işlev kelimeleri.
+_EN_ISARET = re.compile(
+    r"(?i)\b(?:the|and|for|with|of|in|to|use|used|uses|agent|auxiliary|"
+    r"treatment|only|chemical|chemicals|product|products|application|"
+    r"industrial|manufacturing|processing)\b")
+
+# Türkçeye özgü karakterler — varsa metin Türkçedir.
+_TR_KARAKTER = re.compile(r"[çğıöşüÇĞİÖŞÜ]")
+
+
+def _ingilizce_mi(val: str) -> bool:
+    """Metin İngilizce mi? Türkçeye özgü karakter YOKSA ve İngilizce işlev
+    kelimesi VARSA İngilizce sayılır. "Tekstil uygulaması için binder" gibi
+    İngilizce ödünç kelime içeren TÜRKÇE metinler bu testten geçmez."""
+    d = str(val or "").strip()
+    if len(d) < 3 or _TR_KARAKTER.search(d):
+        return False
+    return bool(_EN_ISARET.search(d))
+
+
+def _sozlukten_cevir(val: str):
+    """Sözlükten Türkçe karşılığı bulur. Önce TAM eşleşme, sonra metin
+    içindeki bilinen terimlerin değiştirilmesi denenir."""
+    d = re.sub(r"\s+", " ", str(val or "")).strip().strip(".").lower()
+    if d in _EN_TR_SOZLUK:
+        return _EN_TR_SOZLUK[d]
+    # Terim değişimi: uzun terimler önce (kısa olan uzunun içinde geçebilir)
+    yeni, degisti = val, False
+    for en in sorted(_EN_TR_SOZLUK, key=len, reverse=True):
+        if re.search(rf"\b{re.escape(en)}\b", yeni, re.IGNORECASE):
+            yeni = re.sub(rf"\b{re.escape(en)}\b", _EN_TR_SOZLUK[en], yeni,
+                          flags=re.IGNORECASE)
+            degisti = True
+    return yeni.strip() if degisti else None
+
+
+def fonksiyon_turkcelestir(val: str, ai_chain=None, ai_models=None,
+                            ai_keys=None, ai_ollama_url=""):
+    """Fonksiyon metni İngilizce ise Türkçesini döner.
+
+    Sıra: (1) terim sözlüğü -- deterministik, ağ isteği yok
+          (2) AI çeviri -- sözlük yetmezse ve AI yapılandırılmışsa
+          (3) çevrilemezse ORİJİNAL metin korunur (bilgi kaybı olmasın).
+    Türkçe metinlere hiç dokunulmaz."""
+    if not val:
+        return val
+    d = re.sub(r"\s+", " ", str(val)).strip().strip(".").lower()
+    # 1) TAM eşleşme — dil tespitine bakılmaz. "Optical brightener" gibi
+    #    İngilizce işlev kelimesi içermeyen terimler de böylece çevrilir.
+    if d in _EN_TR_SOZLUK:
+        return _EN_TR_SOZLUK[d]
+    if not _ingilizce_mi(val):
+        return val
+    # 2) Terim değişimi — sonuçta HÂLÂ İngilizce kelime kalıyorsa kabul
+    #    edilmez ("Wetting agent for dyeing process" -> "ıslatıcı for
+    #    dyeing process" gibi karma metin envantere yazılmamalı).
+    kismi = _sozlukten_cevir(val)
+    if kismi and not _EN_ISARET.search(kismi):
+        return kismi
+    # 3) AI çeviri (yapılandırılmışsa)
+    if ai_chain:
+        try:
+            from ai_destek import fonksiyon_cevir
+            ai_sonuc = fonksiyon_cevir(val, chain=ai_chain,
+                                        models=ai_models or {},
+                                        keys=ai_keys or {},
+                                        ollama_url=ai_ollama_url)
+            if ai_sonuc:
+                return ai_sonuc
+        except Exception:
+            pass
+    # 4) Çevrilemedi -> bilgi kaybı olmasın, ORİJİNAL korunur.
+    return val
+
+
+def _fonksiyon_kisalt(val: str) -> str:
+    """Çok maddeli uzun kullanım listelerini tek bir üst başlığa indirir.
+
+    KURAL (kullanıcı kararı): MSDS Bölüm 1.2 birden fazla kullanım alanı
+    sayıyorsa aralarından BİR TANESİNİ seçmek yanıltıcıdır -- ilk madde her
+    zaman ürünü temsil etmez (örn. oksijende ilk madde "uzay gemilerinde
+    yakıt"). Bu durumda hücreye kapsayıcı ve doğru olan "YARDIMCI KİMYASAL"
+    yazılır.
+
+    Eşik altındaki (tek maddeli) değerlere DOKUNULMAZ -- örn.
+    "Tekstil boyaları, finisyon ve baskı ürünleri - ağartıcı ve diğer" (64)
+    ya da "Boya koruyucu, yükseltgen madde" (31) olduğu gibi kalır.
+
+    Not: fonksiyon_ozel_liste.py'deki elle tanımlı değerler bu kuralın
+    ÜSTÜNDEDİR; orada tanımlı ürünlerde bu fonksiyonun çıktısı kullanılmaz.
     """
     if not val or len(val) <= _FONKSIYON_KIRPMA_ESIGI:
         return val
     for ayrac in (";", ","):
         if ayrac in val:
-            ilk = val.split(ayrac)[0].strip()
-            if len(ilk) >= 12:          # anlamlı bir madde mi?
-                val = ilk
-                break
+            maddeler = [p.strip() for p in val.split(ayrac) if len(p.strip()) >= 12]
+            if len(maddeler) >= 2:
+                return FONKSIYON_COKLU_METNI
+    # Uzun ama tek parça bir metin: son ekleri atıp olduğu gibi bırak.
     val = re.sub(_FONKSIYON_SON_EKLER, "", val, flags=re.IGNORECASE).strip()
     return val.strip(" ,;.-–:")
 
@@ -1254,16 +1400,18 @@ def extract_full_info(pdf_path: str, text: str = None, ai_chain: list = None,
         # en temsil edici olan değildir. AI listeden BİREBİR seçer ve
         # seçimi belgeye karşı doğrulanır. Başarısız olursa kırpılmış
         # değer (A) olduğu gibi kalır.
-        ham = sonuc.get("fonksiyon_ham")
-        if ham and len(ham) > _FONKSIYON_KIRPMA_ESIGI:
-            try:
-                from ai_destek import fonksiyon_sec
-                secim = fonksiyon_sec(ham, chain=ai_chain, models=ai_models or {},
-                                       keys=ai_keys or {}, ollama_url=ai_ollama_url)
-                if secim:
-                    sonuc["fonksiyon"] = secim
-            except Exception:
-                pass
+        # NOT: Çok maddeli listelerde artık AI'ya SEÇİM yaptırılmıyor --
+        # kural gereği "YARDIMCI KİMYASAL" yazılıyor (bkz. _fonksiyon_kisalt).
+        # Bu, ürün başına gereksiz bir AI çağrısını da ortadan kaldırdı.
+        # AI yalnızca İngilizce metinlerin ÇEVİRİSİ için devreye girer.
+        try:
+            _f = sonuc.get("fonksiyon")
+            if _f:
+                sonuc["fonksiyon"] = fonksiyon_turkcelestir(
+                    _f, ai_chain=ai_chain, ai_models=ai_models,
+                    ai_keys=ai_keys, ai_ollama_url=ai_ollama_url)
+        except Exception:
+            pass
 
     return sonuc
 

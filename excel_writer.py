@@ -560,17 +560,16 @@ def add_products(envanter_path: str, output_path: str, urunler: list,
     no_col = col_map.get(_norm("No"), 1)
     name_col = col_map.get(_norm("Kimyasal Adı"))
 
-    # V1: CAS No sütunu sabit 12 genişlikte olmalı (şablonda 9.71 geliyor,
-    # multi-CAS değerlerinde dar kalıyordu).
-    cas_col = col_map.get(_norm("Cas_No"))
-    if cas_col:
-        ws.column_dimensions[get_column_letter(cas_col)].width = 12
-
-    # V1: F/G/H sütunları (Tehlikeli-Tehlikesiz, Tehlike Etiketi, H KODLARI)
-    # sabit 15 genişlikte. Tehlike Etiketi hücresine GHS piktogramları
-    # gömüldüğü için _etiket_gorseli_goml yerleşimi bu yeni genişliğe göre
-    # kendini otomatik ayarlar (sütun genişliği parametre olarak geçiliyor).
-    for _bas in ("Tehlikeli/ Tehlikesiz", "Tehlike Etiketi", "H KODLARI"):
+    # V1: C/D/F/G/H sütunları sabit 15 genişlikte olmalı.
+    #   C Cas_No (şablonda 9.71 — multi-CAS değerlerinde dar kalıyordu)
+    #   D Tedarikçi           F Tehlikeli/Tehlikesiz
+    #   G Tehlike Etiketi     H H KODLARI
+    # Sütunlar harfe göre DEĞİL başlık adına göre bulunur; şablonda sütun
+    # sırası değişse de doğru hücrelere uygulanır. "Tehlike Etiketi"
+    # hücresine GHS piktogramları gömüldüğü için _etiket_gorseli_goml
+    # yerleşimi bu genişliğe göre kendini otomatik ayarlar.
+    for _bas in ("Cas_No", "Tedarikçi", "Tehlikeli/ Tehlikesiz",
+                 "Tehlike Etiketi", "H KODLARI"):
         _c = col_map.get(_norm(_bas))
         if _c:
             ws.column_dimensions[get_column_letter(_c)].width = 15
