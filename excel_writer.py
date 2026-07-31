@@ -452,18 +452,19 @@ def fill_or_append_v2(envanter_path: str, output_path: str, urunler: list,
     return sonuc
 
 
-def _etiket_gorseli_goml(ws, row, col, kodlar, hucre_yuksekligi=110):
-    """Verilen ADR/GHS kod listesinin PNG görsellerini hücreye gömer.
+def _etiket_gorseli_goml(ws, row, col, kodlar, hucre_yuksekligi=110,
+                          sutun_genisligi=None):
+    """ADR/GHS etiket görsellerini hücreye, HÜCREDEN TAŞMADAN yerleştirir.
 
-    msds-ozetleyici'deki yaklaşımın Excel karşılığı: orada etiketler HTML'de
-    `<img src="data:...">` ile gösteriliyor; burada aynı orijinal görseller
-    base64 PNG olarak etiket_gorselleri.py'de gömülü ve openpyxl ile
-    doğrudan hücreye yerleştiriliyor (çalışma zamanında dönüştürücü paket
-    GEREKMEZ).
+    Görseller hücrenin gerçek piksel boyutuna göre otomatik yerleşir:
+    1, 2 veya 3 etiket için olası tüm ızgara düzenleri (yan yana, alt alta,
+    2+1 karma) denenir ve simgeyi EN BÜYÜK gösteren düzen seçilir. Blok
+    hücre içinde ortalanır.
 
-    Birden fazla etiket varsa (örn. "3+6.1") hücre içinde YAN YANA dizilir --
-    bunun için OneCellAnchor + colOff (EMU) kullanılır; sadece hücre adı
-    verilirse tüm görseller üst üste binerdi."""
+    Excel ölçü birimleri:
+      sütun genişliği (karakter) -> piksel = genişlik * 7 + 5
+      satır yüksekliği (punto)   -> piksel = punto * 96 / 72
+    """
     if not kodlar:
         return
     try:
@@ -472,24 +473,55 @@ def _etiket_gorseli_goml(ws, row, col, kodlar, hucre_yuksekligi=110):
             AnchorMarker, OneCellAnchor)
         from openpyxl.drawing.xdr import XDRPositiveSize2D
     except Exception:
-        return  # modül yoksa sessizce geç, metin değeri hücrede zaten var
+        return  # modül yoksa sessizce geç
 
-    EMU = 9525  # 1 piksel = 9525 EMU
-    # Satır yüksekliği punto; 1 punto ≈ 1.333 piksel. Görseli satıra sığdır,
-    # alt tarafta metin (uyarı kelimesi / etiket kodu) için pay bırak.
-    kenar = max(20, min(52, int(hucre_yuksekligi * 1.333 * 0.42)))
-    for i, kod in enumerate(kodlar[:3]):     # en fazla 3 etiket
-        akis = png_akisi(kod)
-        if akis is None:
-            continue
+    EMU = 9525          # 1 piksel = 9525 EMU
+    KENAR = 3           # hücre kenarından bırakılacak boşluk (px)
+    ARA = 2             # simgeler arası boşluk (px)
+
+    kodlar = [k for k in kodlar[:3] if png_akisi(k) is not None]
+    if not kodlar:
+        return
+    n = len(kodlar)
+
+    genislik_px = int((sutun_genisligi or 12) * 7 + 5)
+    yukseklik_px = int(hucre_yuksekligi * 96 / 72)
+    kul_g = max(16, genislik_px - 2 * KENAR)
+    kul_y = max(16, yukseklik_px - 2 * KENAR)
+
+    # Olası ızgara düzenleri: (sütun, satır). Hepsi n simgeyi alabilmeli.
+    adaylar = [(s, (n + s - 1) // s) for s in range(1, n + 1)]
+    en_iyi, en_iyi_kenar = None, 0
+    for suts, satirlar in adaylar:
+        kenar = min((kul_g - (suts - 1) * ARA) // suts,
+                    (kul_y - (satirlar - 1) * ARA) // satirlar)
+        if kenar > en_iyi_kenar:
+            en_iyi, en_iyi_kenar = (suts, satirlar), kenar
+    if not en_iyi or en_iyi_kenar < 8:
+        return
+    suts, satirlar = en_iyi
+    kenar = min(en_iyi_kenar, 64)   # gereksiz büyümesin
+
+    # Bloğu hücre içinde ortala
+    blok_g = suts * kenar + (suts - 1) * ARA
+    blok_y = satirlar * kenar + (satirlar - 1) * ARA
+    bas_x = KENAR + max(0, (kul_g - blok_g) // 2)
+    bas_y = KENAR + max(0, (kul_y - blok_y) // 2)
+
+    for i, kod in enumerate(kodlar):
+        sut_i, sat_i = i % suts, i // suts
+        # Son satırdaki eksik simgeleri de ortala (örn. 3 simge, 2x2 ızgara)
+        bu_satirdaki = min(suts, n - sat_i * suts)
+        satir_g = bu_satirdaki * kenar + (bu_satirdaki - 1) * ARA
+        x = KENAR + max(0, (kul_g - satir_g) // 2) + sut_i * (kenar + ARA)
+        y = bas_y + sat_i * (kenar + ARA)
         try:
-            img = XLImage(akis)
-            img.width = kenar
-            img.height = kenar
-            imza = AnchorMarker(col=col - 1, colOff=(4 + i * (kenar + 3)) * EMU,
-                                 row=row - 1, rowOff=4 * EMU)
+            img = XLImage(png_akisi(kod))
+            img.width = img.height = kenar
             img.anchor = OneCellAnchor(
-                _from=imza, ext=XDRPositiveSize2D(kenar * EMU, kenar * EMU))
+                _from=AnchorMarker(col=col - 1, colOff=x * EMU,
+                                    row=row - 1, rowOff=y * EMU),
+                ext=XDRPositiveSize2D(kenar * EMU, kenar * EMU))
             ws.add_image(img)
         except Exception:
             continue
@@ -557,18 +589,31 @@ def add_products(envanter_path: str, output_path: str, urunler: list,
         # ── Etiket görselleri ────────────────────────────────────────────
         # "ADR İŞARETİ"  <- Tablo A "Etiketler" kodları (2.2, 8, 3+6.1 ...)
         # "Tehlike Etiketi" <- H kodlarından türetilen GHS piktogramları
+        # Kod kaynağı olarak GİZLİ anahtarlar kullanılır ("_adr_etiket",
+        # "_ghs_kodlari"); böylece hücreye METİN YAZILMADAN yalnızca
+        # görsel yerleşir. UN no bulunamayan (kapsam dışı / manuel kontrol)
+        # satırlarda ise ilgili sütunda AÇIKLAMA METNİ kalır ve görsel
+        # basılmaz -- basılacak bir etiket zaten yoktur.
         try:
             from etiket_gorselleri import adr_etiket_kodlari, ghs_kodlari
             adr_col = col_map.get(_norm("ADR İŞARETİ"))
             if adr_col:
-                _etiket_gorseli_goml(ws, target_row, adr_col,
-                                      adr_etiket_kodlari(urun.get("ADR İŞARETİ")))
+                _etiket_gorseli_goml(
+                    ws, target_row, adr_col,
+                    adr_etiket_kodlari(urun.get("_adr_etiket")),
+                    hucre_yuksekligi=110,
+                    sutun_genisligi=ws.column_dimensions[
+                        get_column_letter(adr_col)].width)
             teh_col = col_map.get(_norm("Tehlike Etiketi"))
             if teh_col:
-                _etiket_gorseli_goml(ws, target_row, teh_col,
-                                      ghs_kodlari(urun.get("H KODLARI")))
+                _etiket_gorseli_goml(
+                    ws, target_row, teh_col,
+                    ghs_kodlari(urun.get("_ghs_kaynak") or urun.get("H KODLARI")),
+                    hucre_yuksekligi=110,
+                    sutun_genisligi=ws.column_dimensions[
+                        get_column_letter(teh_col)].width)
         except Exception:
-            pass  # görsel gömülemezse metin değerleri hücrede kalır
+            pass  # görsel gömülemezse hücre boş kalır, satır bozulmaz
 
         # V1: Tüm veri girilen satırlar sabit 110 yüksekliğe getirilir.
         # (Önceki _auto_fit_row_height uzun "kapsam dışı" metinlerde satırı

@@ -165,6 +165,15 @@ def get_official_sinif_for_un(tablo_a_path: str, un_no: str):
     return None
 
 
+def _fonksiyon_ozel(kimyasal_adi):
+    """fonksiyon_ozel_liste.py'deki elle tanımlı fonksiyon metnini döner."""
+    try:
+        from fonksiyon_ozel_liste import fonksiyon_ozel_bul
+        return fonksiyon_ozel_bul(kimyasal_adi)
+    except Exception:
+        return None
+
+
 def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
                          ambalaj_tank_dokme: str = "AMBALAJLI"):
     """extractor.extract_adr_info() çıktısından envanter satırı sözlüğü üretir."""
@@ -181,7 +190,10 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
         # Boş alanlara "-" yazılır: PDF'te olmayan bilgi ASLA doldurulmaz
         # (AI katmanı da _pdf_dogrula ile belgeye bağlanmıştır).
         "Tedarikçi": adr_info.get("tedarikci") or "-",
-        "Fonksiyonu": adr_info.get("fonksiyon") or "-",
+        # (C) ELLE GEÇERSİZ KILMA — fonksiyon_ozel_liste.py'de bu kimyasal
+        # için tanımlı bir metin varsa her şeyin ÜSTÜNDE tutulur.
+        "Fonksiyonu": (_fonksiyon_ozel(kimyasal_adi)
+                       or adr_info.get("fonksiyon") or "-"),
         "Tehlikeli/ Tehlikesiz": adr_info.get("tehlikeli_tehlikesiz") or "-",
         "H KODLARI": adr_info.get("h_kodlari") or "-",
         "durum": "ok",  # ok | not_in_scope | manual_review
@@ -190,7 +202,16 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
     # görselini excel_writer H kodlarından üretip hücreye gömer; buraya
     # ayrıca uyarı kelimesi (Tehlike/Dikkat) metin olarak yazılır, hiç
     # veri yoksa "-" konur -- hücre ARTIK BOŞ BIRAKILMAZ.
-    row["Tehlike Etiketi"] = adr_info.get("tehlike_etiketi") or "-"
+    # "Tehlike Etiketi" sütunu da METİNSİZ -- GHS piktogramı hücreye
+    # görsel olarak yerleşir. Piktogram üretecek H kodu yoksa "-" yazılır.
+    _ghs_kaynak = adr_info.get("h_kodlari")
+    row["_ghs_kaynak"] = _ghs_kaynak
+    try:
+        from etiket_gorselleri import ghs_kodlari as _ghs_k
+        _var = bool(_ghs_k(_ghs_kaynak))
+    except Exception:
+        _var = False
+    row["Tehlike Etiketi"] = "" if _var else "-"
 
     if adr_info.get("adr_kapsaminda") is False:
         row.update({
@@ -204,7 +225,9 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
             "TANK KODU": NOT_IN_SCOPE_TEXT,
             "AMBALAJLAMA TALİMATLARI": NOT_IN_SCOPE_TEXT,
             "TAŞIMA KATEGORİSİ/(TÜNEL KODU)": NOT_IN_SCOPE_TEXT,
-            "ADR İŞARETİ": "-",   # kapsam dışı -> ADR işareti yok
+            # Kapsam dışı: basılacak ADR etiketi yok; hücrede diğer ADR
+            # sütunlarıyla AYNI açıklama metni kalır (kullanıcı talebi).
+            "ADR İŞARETİ": NOT_IN_SCOPE_TEXT,
         })
         if adr_info.get("tehlikeli_tehlikesiz") == "Tehlikesiz":
             row["Tehlike Etiketi"] = "-"
@@ -308,7 +331,12 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
         # ADR İŞARETİ: Tablo A "Etiketler" sütunundan gelen etiket kodları.
         # Hücreye METİN olarak yazılır; excel_writer ayrıca bu kodlara
         # karşılık gelen ADR elmas görselini aynı hücreye gömer.
-        row["ADR İŞARETİ"] = match.get("etiketler") or "-"
+        # UN no bulunduğu için hücreye METİN YAZILMAZ -- yalnızca ADR
+        # elmas görseli yerleşir (kullanıcı talebi). Kodlar gizli anahtarla
+        # excel_writer'a taşınır; gizli anahtarlar sütun başlığıyla
+        # eşleşmediği için hiçbir hücreye yazılmaz.
+        row["ADR İŞARETİ"] = ""
+        row["_adr_etiket"] = match.get("etiketler")
 
     if match is None:
         row.update({

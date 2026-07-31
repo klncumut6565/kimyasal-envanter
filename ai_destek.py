@@ -582,6 +582,62 @@ def build_failover_chain(primary: str, keys: dict, ollama_url: str) -> list:
     return chain
 
 
+def fonksiyon_sec(bolum12_metni: str, chain: list, models: dict, keys: dict,
+                   ollama_url: str = ""):
+    """Bölüm 1.2'deki ÇOK MADDELİ kullanım listesinden ürünü en iyi temsil
+    eden maddeyi AI'ya BİREBİR seçtirir.
+
+    NEDEN GEREKLİ: bazı MSDS'ler onlarca kullanım alanını tek paragrafta
+    sayar ve İLK madde her zaman en temsil edici olan değildir. Örn.
+    oksijende ilk madde "uzay gemilerinde yakıt", oysa envanterde görülmesi
+    gereken "metallerin kesimi, kaynağı, sertleşmesi". Bu bir uzmanlık
+    kararıdır, regex veremez.
+
+    GÜVENLİK: model YENİ METİN ÜRETMEZ, yalnızca verilen listeden bir parça
+    SEÇER. Dönen değer ayrıca _pdf_dogrula ile belge metnine karşı sınanır;
+    birebir geçmiyorsa reddedilir (çağıran taraf otomatik kırpmaya düşer).
+
+    Dönüş: seçilen metin, ya da seçilemezse None."""
+    if not bolum12_metni or not chain:
+        return None
+
+    prompt = (
+        "Aşağıda bir MSDS/SDS belgesinin Bölüm 1.2 (Belirlenmiş Kullanımlar) "
+        "metni var. Bu metin ürünün BİRDEN FAZLA kullanım alanını sayıyor.\n\n"
+        "GÖREV: Ürünü EN İYİ TEMSİL EDEN kullanım maddesini SEÇ.\n\n"
+        "══════ MUTLAK KURALLAR ══════\n"
+        "1. Metinden bir parçayı BİREBİR KOPYALA. Tek kelimesini bile "
+        "değiştirme, kısaltma, birleştirme veya yeniden yazma.\n"
+        "2. YENİ METİN ÜRETME. Kendi kimya bilgini KULLANMA.\n"
+        "3. Ürünün ana/yaygın endüstriyel kullanımını seç; egzotik veya "
+        "niş olanı (örn. uzay/havacılık) TERCİH ETME.\n"
+        "4. Yalnızca TEK bir madde seç, birden fazlasını birleştirme.\n"
+        "5. Seçtiğin metin en fazla 80 karakter olsun.\n\n"
+        'SADECE şu biçimde geçerli JSON döndür, başka hiçbir şey yazma: '
+        '{"secim": "<birebir kopyalanan metin>"}\n\n'
+        "BÖLÜM 1.2 METNİ:\n" + bolum12_metni
+    )
+
+    try:
+        for eng in chain:
+            try:
+                sonuc = _call_ai(prompt, eng, models.get(eng, ""), ollama_url, keys)
+            except Exception:
+                continue
+            if not isinstance(sonuc, dict):
+                continue
+            secim = sonuc.get("secim")
+            if not isinstance(secim, str) or not secim.strip():
+                continue
+            secim = secim.strip().strip(" ,;.-–:")
+            # BAĞLILIK DOĞRULAMASI — seçim gerçekten belgede geçiyor mu?
+            if _pdf_dogrula("fonksiyon", secim, _tr_normalize(bolum12_metni)):
+                return secim
+    except Exception:
+        pass
+    return None
+
+
 def tamamla_eksik_alanlar(text: str, mevcut: dict, chain: list, models: dict, keys: dict,
                            ollama_url: str = "") -> dict:
     """extractor.py'nin doldurduğu 'mevcut' sözlüğünü alır, boş kalan alanlar için

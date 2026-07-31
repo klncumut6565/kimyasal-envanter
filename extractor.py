@@ -520,7 +520,7 @@ _VERI_YOK = [
 ]
 
 
-def _fonksiyon_temizle(val: str):
+def _fonksiyon_temizle(val: str, kisalt: bool = True):
     """Yakalanan fonksiyon metninden etiket önekini ve fazla boşlukları
     temizler. Temizlik sonrası anlamlı bir değer kalmazsa None döner
     (böylece bir sonraki desen denenir, etiket envantere yazılmaz)."""
@@ -538,7 +538,8 @@ def _fonksiyon_temizle(val: str):
     # Sütun hizalamasından gelen çoklu boşlukları teke indir; baştaki/
     # sondaki artık noktalama işaretlerini (nokta, tire, iki nokta) at.
     val = re.sub(r"\s{2,}", " ", val).strip().strip("-–:.").strip()
-    val = _fonksiyon_kisalt(val)
+    if kisalt:
+        val = _fonksiyon_kisalt(val)
     return val or None
 
 
@@ -616,7 +617,18 @@ def _fonksiyon_kisalt(val: str) -> str:
     return val.strip(" ,;.-–:")
 
 
+def extract_fonksiyon_ham(text: str):
+    """extract_fonksiyon ile AYNI değeri döner ama ÇOK MADDELİ uzun liste
+    KIRPILMADAN verilir. AI'nın (fonksiyon_sec) hangi maddeleri arasından
+    seçim yapacağını görmesi için gereklidir."""
+    return _extract_fonksiyon(text, kisalt=False)
+
+
 def extract_fonksiyon(text: str):
+    return _extract_fonksiyon(text, kisalt=True)
+
+
+def _extract_fonksiyon(text: str, kisalt: bool = True):
     """Bölüm 1.2'den ürünün kullanım amacını/fonksiyonunu çıkarır.
 
     KRİTİK: Başlık numaralandırması ("1.2.1", "1.3" vb.) veya İngilizce
@@ -688,7 +700,7 @@ def extract_fonksiyon(text: str):
             # Etiket kalıntısını ("Madde/Müstahzarın :", "Tanımlama/Kullanım")
             # değerin başından temizle -- bu kontrollerden ÖNCE yapılır ki
             # aşağıdaki başlık/İngilizce elemeleri gerçek değere uygulansın.
-            val = _fonksiyon_temizle(val)
+            val = _fonksiyon_temizle(val, kisalt=kisalt)
             if not val:
                 continue
             # Jenerik kullanım kategorisi ("Endüstriyel kullanım") veya
@@ -1042,6 +1054,8 @@ def extract_full_info(pdf_path: str, text: str = None, ai_chain: list = None,
     sonuc = {
         "tedarikci": extract_tedarikci(text),
         "fonksiyon": extract_fonksiyon(text),
+        # Kırpılmamış hali — AI seçimi (B) bunun üzerinden çalışır.
+        "fonksiyon_ham": extract_fonksiyon_ham(text),
         "cas_no": extract_cas_no(text),
         "h_kodlari": h_kodlari,
         "tehlikeli_tehlikesiz": extract_tehlikeli_tehlikesiz(text, h_kodlari),
@@ -1067,6 +1081,22 @@ def extract_full_info(pdf_path: str, text: str = None, ai_chain: list = None,
             sonuc.update(guncelleme)  # sadece AI'nın doldurabildiği (regex'in boş bıraktığı) alanlar
         except Exception:
             pass  # AI katmanı hiçbir koşulda regex sonucunu düşürmemeli
+
+        # ── (B) Çok maddeli uzun kullanım listesinden AI ile SEÇİM ──────
+        # Otomatik kırpma her zaman ilk maddeyi alır; ilk madde her zaman
+        # en temsil edici olan değildir. AI listeden BİREBİR seçer ve
+        # seçimi belgeye karşı doğrulanır. Başarısız olursa kırpılmış
+        # değer (A) olduğu gibi kalır.
+        ham = sonuc.get("fonksiyon_ham")
+        if ham and len(ham) > _FONKSIYON_KIRPMA_ESIGI:
+            try:
+                from ai_destek import fonksiyon_sec
+                secim = fonksiyon_sec(ham, chain=ai_chain, models=ai_models or {},
+                                       keys=ai_keys or {}, ollama_url=ai_ollama_url)
+                if secim:
+                    sonuc["fonksiyon"] = secim
+            except Exception:
+                pass
 
     return sonuc
 
@@ -1491,6 +1521,22 @@ def parse_numbered_subsections(sec14_text: str):
             if m and _gecerli_sinif(m.group(1), un_no):
                 sinif = m.group(1)
         if sinif is None:
+            # TEKKİM tarzı şablon: etiket ve değer AYNI SATIRDA ama İKİ
+            # NOKTA YOK, aralarında yalnızca boşluk var:
+            #     "Sınıfı  5.1"      "Ambalaj grubu  III"
+            # Yukarıdaki 1506 numaralı desen ":" ZORUNLU tuttuğu, 1481
+            # numaralı desen ise "SINIF" ten sonra doğrudan boşluk beklediği
+            # ("Sınıfı" daki sondaki "ı" yüzünden eşleşmiyor) için bu format
+            # tüm zincirden kaçıyor ve sınıf okunamıyordu.
+            # Değerin AYNI SATIRDA olması şartı, AK-KİM tablolarında satır
+            # başında tek başına duran "SINIFI" kelimesiyle yanlış
+            # eşleşmeyi önler (orada aynı satırda sayı yoktur).
+            m = re.search(
+                r"(?im)^\s*S[ıiİI]n[ıiİI]f[ıi]?\s+(\d+(?:\.\d+)?)\b",
+                sec14_text)
+            if m and _gecerli_sinif(m.group(1), un_no):
+                sinif = m.group(1)
+        if sinif is None:
             # "14.3 Nakliyat tehlike sınf(lar)ı\nADR/RID: 8" formatı —
             # 14.3 başlığı var, değer hemen altında "ADR/RID: 8" şeklinde.
             # "sınf" (ı düşmüş) font bozulması da tolere edilir.
@@ -1568,14 +1614,14 @@ def parse_numbered_subsections(sec14_text: str):
                             # "Ambalaj gurubu:\nII" formatı — etiket+iki nokta,
                             # değer alt satırda tek başına (gurup/grup varyasyonu).
                             m = re.search(
-                                r"Ambalaj\s+gur?ubu\s*:?\s*\n\s*(I{1,3})\b",
+                                r"Ambalaj\s+g[ur]{1,2}ubu\s*:?\s*\n\s*(I{1,3})\b",
                                 sec14_text, re.IGNORECASE)
                             if m:
                                 pg = m.group(1)
                             else:
                                 # BASF formatı: "Ambalaj gurubu:   II" aynı satırda
                                 m = re.search(
-                                    r"Ambalaj\s+gur?ubu\s*:\s*(I{1,3})\b",
+                                    r"Ambalaj\s+g[ur]{1,2}ubu\s*:\s*(I{1,3})\b",
                                     sec14_text, re.IGNORECASE)
                                 if m:
                                     pg = m.group(1)
@@ -1587,6 +1633,16 @@ def parse_numbered_subsections(sec14_text: str):
                                         sec14_text, re.IGNORECASE)
                                     if m:
                                         pg = m.group(1)
+                                    else:
+                                        # TEKKİM tarzı: "Ambalaj grubu  III"
+                                        # — etiket ve değer AYNI SATIRDA,
+                                        # İKİ NOKTA YOK (sınıf için eklenen
+                                        # desenle aynı şablon sorunu).
+                                        m = re.search(
+                                            r"(?im)^\s*Ambalaj\s+g[ur]{1,2}ubu\s+(I{1,3})\b",
+                                            sec14_text)
+                                        if m:
+                                            pg = m.group(1)
 
     return {"un_no": un_no, "sinif": sinif, "paketleme_grubu": pg}
 
@@ -1655,12 +1711,12 @@ def extract_adr_info(pdf_path: str, ai_chain: list = None, ai_models: dict = Non
                         r"zararlılık\s+(\d+(?:\.\d+)?)\s*\n\s*s[ıi]n[ıi]f",
                         block_text, _re.IGNORECASE)
                 _pg = _re.search(
-                    r"(?:Ambalaj\s+gur?ubu|Packing\s+[Gg]roup)[^\n]*\n\s*(I{1,3})\b",
+                    r"(?:Ambalaj\s+g[ur]{1,2}ubu|Packing\s+[Gg]roup)[^\n]*\n\s*(I{1,3})\b",
                     block_text, _re.IGNORECASE)
                 if not _pg:
                     # BASF formatı: "Ambalaj gurubu:   II" aynı satırda
                     _pg = _re.search(
-                        r"Ambalaj\s+gur?ubu\s*:\s*(I{1,3})\b",
+                        r"Ambalaj\s+g[ur]{1,2}ubu\s*:\s*(I{1,3})\b",
                         block_text, _re.IGNORECASE)
                 if _un:
                     result["adr_kapsaminda"] = True
