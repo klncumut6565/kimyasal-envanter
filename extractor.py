@@ -347,16 +347,47 @@ _TEDARIKCI_GECERSIZ = [
     r"^(?:tan[ıi]m[ıi]?|bilgiler[ıi]?|ad[ıi]|unvan[ıi]?)\s*$",
     r"^(?:adres|telefon|faks|fax|tel|e-?posta|mail|web)\b",
     r"^(?:mevcut\s+de[ğg]il|bilgi\s+yok|veri\s+yok|belirtilmemi[şs])",
+    # "1.1 ürün adı" / "1.3 tedarikçinin bilgileri" gibi BAŞLIK satırları
+    r"^\d+(?:\.\d+)*\.?\s*(?:[üu]r[üu]n|madde|kar[ıi][şs][ıi]m|tedarik|"
+    r"[şs]irket|firma|g[üu]venlik)\b",
 ]
 
 
 _TEDARIKCI_ETIKET_ONEKI = (
-    r"^\s*(?:[şs]irket|firma|tedarik[çc]i|[üu]retici|imalat[çc][ıi]|"
-    r"company|supplier|manufacturer)"
+    r"^\s*(?:\d+(?:\.\d+)*\.?\s*)?"        # "1.3.1 " gibi bölüm numarası
+    r"(?:[şs]irket|firma|tedarik[çc]i|[üu]retici|imalat[çc][ıi]|"
+    r"bilgiler[ıi]?|company|supplier|manufacturer)"
     r"(?:\s*/\s*(?:[üu]retici|tedarik[çc]i|supplier|manufacturer))?"
     r"(?:\s+(?:ad[ıi]|unvan[ıi]?|tan[ıi]m[ıi]?|bilgisi|bilgileri|name))?"
-    r"\s*(?::|\s{2,})\s*"
+    r"\s*(?:[:;]|\s{2,})\s*"
 )
+
+
+# Adres olduğunu ele veren işaretler. Bir değer bunlardan birini içeriyor
+# VE firma soneki (A.Ş., Ltd. Şti., San., Tic. ...) içermiyorsa firma adı
+# değil ADRES satırıdır (örn. "Turgut Reis Mah. Tekstilkent Koza").
+_ADRES_ISARETI = re.compile(
+    r"(?i)\b(?:mah(?:\.|allesi)?|cad(?:\.|desi)?|sok(?:\.|ak|a[ğg][ıi])?|"
+    r"bulv(?:\.|ar[ıi]?)?|blok|kat\s*:|no\s*[:.]|apt\.|k[üu]me\s+evler|"
+    r"organize\s+sanayi\s+b[öo]lgesi|osb)\b")
+
+
+def _tekrari_sil(val: str) -> str:
+    """Aynı firma adı iki kez yazılmışsa teke indirir.
+    "Setaş Kimya Sanayi A.Ş.        Setaş Kimya Sanayi A.Ş." -> tek kopya.
+    (Sütun hizalı tablolarda aynı değer iki sütuna da düşebiliyor.)"""
+    if not val:
+        return val
+    # a) Sütun boşluğuyla ayrılmış birebir tekrar
+    parcalar = [p.strip() for p in re.split(r"\s{2,}", val) if p.strip()]
+    if len(parcalar) > 1 and len(set(parcalar)) == 1:
+        return parcalar[0]
+    # b) Tek boşlukla birleşmiş tam tekrar ("X X")
+    d = re.sub(r"\s+", " ", val).strip()
+    yarim, kalan = divmod(len(d), 2)
+    if kalan == 1 and d[yarim] == " " and d[:yarim] == d[yarim + 1:]:
+        return d[:yarim]
+    return val
 
 
 def _tedarikci_temizle(val: str):
@@ -365,13 +396,15 @@ def _tedarikci_temizle(val: str):
     """
     if not val:
         return val
+    val = _tekrari_sil(val)          # collapse ÖNCESİ (sütun ipucu duruyor)
     onceki = None
     while onceki != val:
         onceki = val
         yeni = re.sub(_TEDARIKCI_ETIKET_ONEKI, "", val, count=1, flags=re.IGNORECASE)
         if yeni.strip():
             val = yeni
-    return re.sub(r"\s{2,}", " ", val).strip(" :|-–").strip()
+    val = re.sub(r"\s{2,}", " ", val).strip(" :;|-–•·").strip()
+    return _tekrari_sil(val)         # collapse SONRASI da dene
 
 
 def _tedarikci_gecersiz(val: str) -> bool:
@@ -382,6 +415,12 @@ def _tedarikci_gecersiz(val: str) -> bool:
     for p in _TEDARIKCI_GECERSIZ:
         if re.match(p, d, re.IGNORECASE):
             return True
+    # ADRES satırı mı? Adres işareti içerip firma soneki İÇERMİYORSA
+    # bu bir firma adı değildir ("Turgut Reis Mah. Tekstilkent Koza").
+    # Sonek şartı bilinçli: "Organize Sanayi Bölgesi Yolu San. Tic. A.Ş."
+    # gibi gerçek unvanlar yanlışlıkla elenmesin.
+    if _ADRES_ISARETI.search(d) and not re.search(_COMPANY_SUFFIX, d, re.IGNORECASE):
+        return True
     return False
 
 
