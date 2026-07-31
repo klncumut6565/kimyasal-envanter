@@ -353,14 +353,27 @@ _TEDARIKCI_GECERSIZ = [
 ]
 
 
-_TEDARIKCI_ETIKET_ONEKI = (
-    r"^\s*(?:\d+(?:\.\d+)*\.?\s*)?"        # "1.3.1 " gibi bölüm numarası
-    r"(?:[şs]irket|firma|tedarik[çc]i|[üu]retici|imalat[çc][ıi]|"
-    r"bilgiler[ıi]?|company|supplier|manufacturer)"
-    r"(?:\s*/\s*(?:[üu]retici|tedarik[çc]i|supplier|manufacturer))?"
-    r"(?:\s+(?:ad[ıi]|unvan[ıi]?|tan[ıi]m[ıi]?|bilgisi|bilgileri|name))?"
-    r"\s*(?:[:;]|\s{2,})\s*"
+_TED_KELIME = (
+    r"(?:[şs]irket|firma|tedarik[çc]i|[üu]retici|[üu]reten|[üu]retim|"
+    r"imalat[çc][ıi]|da[ğg][ıi]t[ıi]c[ıi]|ithalat[çc][ıi]|bilgiler[ıi]?|"
+    r"company|supplier|manufacturer|producer|distributor)"
 )
+_TED_EK = r"(?:\s+(?:ad[ıi]|unvan[ıi]?|tan[ıi]m[ıi]?|bilgisi|bilgileri|firma|name))?"
+
+_TEDARIKCI_ETIKET_ONEKLERI = [
+    # (1) BİLEŞİK etiket: "Üreten / Tedarikçi SERİN KİMYA ...",
+    #     "Tedarikçi/Üretici Tanımı : ABC ...". İki etiket kelimesinin
+    #     "/" ile birleşmesi kesin bir etiket işaretidir; bu yüzden
+    #     ardından TEK BOŞLUK gelmesi de ayraç sayılır.
+    r"^\s*(?:\d+(?:\.\d+)*\.?\s*)?" + _TED_KELIME + r"\s*/\s*" + _TED_KELIME
+    + _TED_EK + r"\s*(?:[:;]\s*|\s+)",
+    # (2) TEKİL etiket: "Şirket Adı   TEKKİM ...", "Tedarikçi : DEF ...".
+    #     Burada ayraç olarak ":" ";" ya da SÜTUN BOŞLUĞU (2+) şart --
+    #     tek boşluk kabul edilse "Kimya Sanayi A.Ş." gibi gerçek
+    #     unvanların ilk kelimesi kırpılırdı.
+    r"^\s*(?:\d+(?:\.\d+)*\.?\s*)?" + _TED_KELIME + _TED_EK
+    + r"\s*(?:[:;]|\s{2,})\s*",
+]
 
 
 # Adres olduğunu ele veren işaretler. Bir değer bunlardan birini içeriyor
@@ -400,9 +413,11 @@ def _tedarikci_temizle(val: str):
     onceki = None
     while onceki != val:
         onceki = val
-        yeni = re.sub(_TEDARIKCI_ETIKET_ONEKI, "", val, count=1, flags=re.IGNORECASE)
-        if yeni.strip():
-            val = yeni
+        for _p in _TEDARIKCI_ETIKET_ONEKLERI:
+            yeni = re.sub(_p, "", val, count=1, flags=re.IGNORECASE)
+            if yeni != val and yeni.strip():
+                val = yeni
+                break
     val = re.sub(r"\s{2,}", " ", val).strip(" :;|-–•·").strip()
     return _tekrari_sil(val)         # collapse SONRASI da dene
 
