@@ -566,6 +566,15 @@ def add_products(envanter_path: str, output_path: str, urunler: list,
     if cas_col:
         ws.column_dimensions[get_column_letter(cas_col)].width = 12
 
+    # V1: F/G/H sütunları (Tehlikeli-Tehlikesiz, Tehlike Etiketi, H KODLARI)
+    # sabit 15 genişlikte. Tehlike Etiketi hücresine GHS piktogramları
+    # gömüldüğü için _etiket_gorseli_goml yerleşimi bu yeni genişliğe göre
+    # kendini otomatik ayarlar (sütun genişliği parametre olarak geçiliyor).
+    for _bas in ("Tehlikeli/ Tehlikesiz", "Tehlike Etiketi", "H KODLARI"):
+        _c = col_map.get(_norm(_bas))
+        if _c:
+            ws.column_dimensions[get_column_letter(_c)].width = 15
+
     n = len(urunler)
     insert_at = last_data_row + 1
     _shift_rows_down(ws, footer_row, ws.max_row, n, max_col)
