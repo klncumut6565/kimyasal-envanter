@@ -578,8 +578,7 @@ def add_products(envanter_path: str, output_path: str, urunler: list,
     no_col = col_map.get(_norm("No"), 1)
     name_col = col_map.get(_norm("Kimyasal Adı"))
 
-    # V1: C/D/F/G/H sütunları sabit 15 genişlikte olmalı.
-    #   C Cas_No (şablonda 9.71 — multi-CAS değerlerinde dar kalıyordu)
+    # V1: C/D/F/G/H sütunları sabit 15 genişlikte olmalı.    #   C Cas_No (şablonda 9.71 — multi-CAS değerlerinde dar kalıyordu)
     #   D Tedarikçi           F Tehlikeli/Tehlikesiz
     #   G Tehlike Etiketi     H H KODLARI
     # Sütunlar harfe göre DEĞİL başlık adına göre bulunur; şablonda sütun
@@ -607,7 +606,22 @@ def add_products(envanter_path: str, output_path: str, urunler: list,
         for col_name, value in urun.items():
             idx = col_map.get(_norm(col_name))
             if idx and idx != no_col:
-                ws.cell(row=target_row, column=idx, value=value)
+                hucre = ws.cell(row=target_row, column=idx, value=value)
+                # TARİH sütunları: "GG.AA.YYYY" biçimindeki metin, GERÇEK
+                # Excel tarih değeri olarak yazılır -- böylece sütun
+                # sıralanabilir ve filtrelenebilir olur. extractor
+                # normalize_tarih() ile tüm tarihleri bu biçime indirdiği
+                # için burada tek bir kalıp yeterli. Kapsam dışı/manuel
+                # kontrol metinleri bu kalıba uymaz, metin olarak kalır.
+                if "TARİH" in str(col_name).upper() and isinstance(value, str):
+                    m = re.fullmatch(r"(\d{2})\.(\d{2})\.(\d{4})", value.strip())
+                    if m:
+                        try:
+                            hucre.value = datetime.date(
+                                int(m.group(3)), int(m.group(2)), int(m.group(1)))
+                            hucre.number_format = "DD.MM.YYYY"
+                        except ValueError:
+                            pass   # 31.02.2020 gibi geçersiz tarih -> metin kalsın
 
         if name_col and pdf_relative_paths and i < len(pdf_relative_paths) and pdf_relative_paths[i]:
             _add_pdf_hyperlink(ws, target_row, name_col, pdf_relative_paths[i])

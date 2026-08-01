@@ -155,7 +155,85 @@ def pdf_to_text(pdf_path: str) -> str:
             return ""
 
 
+_TR_AYLAR = {
+    "ocak": 1, "şubat": 2, "subat": 2, "mart": 3, "nisan": 4,
+    "mayıs": 5, "mayis": 5, "haziran": 6, "temmuz": 7,
+    "ağustos": 8, "agustos": 8, "eylül": 9, "eylul": 9,
+    "ekim": 10, "kasım": 11, "kasim": 11, "aralık": 12, "aralik": 12,
+}
+_EN_AYLAR = {
+    "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
+    "april": 4, "apr": 4, "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
+    "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9,
+    "october": 10, "oct": 10, "november": 11, "nov": 11,
+    "december": 12, "dec": 12,
+}
+
+
+def normalize_tarih(deger):
+    """MSDS tarihlerini TEK BİÇİME ('GG.AA.YYYY') indirger.
+
+    Üreticiler aynı bilgiyi çok farklı yazıyor:
+        "25.03.2016"  "25/11/2016"  "13.6.2018"  "8.8.2017"
+        "12 Şubat 2019"  "2024-03-04"  "04/03/2024"
+    Envanterde bunların hepsi aynı sütunda karışık görünüyordu; sıralama
+    ve filtreleme de mümkün olmuyordu.
+
+    GÜN/AY SIRASI: Türkçe MSDS'lerde varsayılan GG/AA'dır. Ancak ilk
+    bileşen 12'den büyük DEĞİL ve ikinci bileşen 12'den BÜYÜKSE bu
+    kesinlikle AA/GG biçimidir (örn. "03/25/2016") ve sıra düzeltilir.
+
+    Çözümlenemeyen değer OLDUĞU GİBİ döner -- bilgi kaybı olmaz.
+    """
+    if not deger:
+        return deger
+    s = re.sub(r"\s+", " ", str(deger)).strip().strip(".,;:")
+
+    def _yil4(y):
+        y = int(y)
+        if y < 100:                      # 2 haneli yıl
+            return 2000 + y if y <= 49 else 1900 + y
+        return y
+
+    def _bicimle(g, a, y):
+        try:
+            import datetime
+            datetime.date(y, a, g)       # geçerlilik kontrolü (31.02 vb.)
+        except Exception:
+            return None
+        return f"{g:02d}.{a:02d}.{y:04d}"
+
+    # 1) ISO: 2024-03-04
+    m = re.fullmatch(r"(\d{4})[-./](\d{1,2})[-./](\d{1,2})", s)
+    if m:
+        return _bicimle(int(m.group(3)), int(m.group(2)), int(m.group(1))) or s
+
+    # 2) Sayısal: 25.03.2016 / 25/11/2016 / 8-8-17
+    m = re.fullmatch(r"(\d{1,2})[-./](\d{1,2})[-./](\d{2,4})", s)
+    if m:
+        a1, a2, y = int(m.group(1)), int(m.group(2)), _yil4(m.group(3))
+        gun, ay = (a1, a2) if not (a1 <= 12 < a2) else (a2, a1)
+        return _bicimle(gun, ay, y) or s
+
+    # 3) Ay adıyla: "12 Şubat 2019" / "12 February 2019"
+    m = re.fullmatch(r"(\d{1,2})\s+([^\W\d_]+)\s+(\d{2,4})", s, re.UNICODE)
+    if m:
+        ad = m.group(2).lower()
+        ay = _TR_AYLAR.get(ad) or _EN_AYLAR.get(ad)
+        if ay:
+            return _bicimle(int(m.group(1)), ay, _yil4(m.group(3))) or s
+
+    # 4) "Şubat 2019" (gün yok) -> ayın 1'i varsayılmaz; olduğu gibi bırak
+    return s
+
+
 def extract_revize_tarihi(text: str):
+    """Bölüm 1/16'dan revizyon tarihini çıkarır ve GG.AA.YYYY biçimine
+    normalize eder (bkz. normalize_tarih)."""
+    return normalize_tarih(_extract_revize_tarihi(text))
+
+
+def _extract_revize_tarihi(text: str):
     # Farklı üreticiler farklı etiketler kullanıyor:
     #  - "Revize Edildiği Tarih: ..."   (örn. Ashland şablonu)
     #  - "Revizyon tarihi: ..."         (örn. DyStar/Sera şablonu)
@@ -1537,6 +1615,15 @@ def kesin_kapsam_disi(sec14_text: str) -> bool:
         r"kapsam[ıi]nda\s+de[ğg]ildir",
         r"(?i)(?:ADR|RID|IMDG|IATA)[^.]{0,60}kapsam[ıi]n?[ıa]?\s*"
         r"(?:d[ıi][şs][ıi]nda|girmez|de[ğg]ildir)",
+        # ERCA/BLANCOLUX kalıbı: "Ürün, karayolu (A.D.R.), demiryolu (RID),
+        # denizyolu (IMDG kodu) ve havayolu (IATA) tehlikeli madde
+        # taşımacılığı yürürlükteki hükümler uyarınca tehlikeli madde
+        # değildir." -- "kapsamında değildir" ifadesi GEÇMEZ, bu yüzden
+        # yukarıdaki desenlere takılmıyordu ve yalnızca metinde sahte bir
+        # sayı bulunmadığı için doğru sonuç veriyordu (şansa bağlı).
+        r"(?i)(?:A\.?D\.?R\.?|karayolu)[^.]{0,140}tehlikeli\s+madde\s+de[ğg]ildir",
+        r"(?i)tehlikeli\s+madde\s+ta[şs][ıi]mac[ıi]l[ıi][ğg][ıi][^.]{0,80}"
+        r"tehlikeli\s+madde\s+de[ğg]ildir",
         r"(?i)tehlikeli\s+(?:madde|mal)\s*(?:lar)?\s*(?:olarak)?\s*"
         r"s[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r[^.]{0,40}"
         r"(?:ta[şs][ıi]ma|ADR|nakliye)",
