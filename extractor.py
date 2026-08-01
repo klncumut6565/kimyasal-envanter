@@ -1511,6 +1511,43 @@ NOT_IN_SCOPE_PATTERNS = [
 ]
 
 
+def kesin_kapsam_disi(sec14_text: str) -> bool:
+    """KESİN ve TARTIŞMASIZ "ADR kapsamı dışında" beyanlarını tespit eder.
+
+    Bu, explicit_not_in_scope()'tan FARKLIDIR: oradaki desenler görece
+    zayıf ifadeleri de kapsadığı için, gerçek bir UN no bulunduğunda
+    ezilmemesi adına UN aramasından SONRA çalıştırılır. Buradakiler ise
+    belgenin ürünün taşımacılık kapsamı dışında olduğunu AÇIKÇA söylediği
+    ifadelerdir ve UN aramasından ÖNCE çalışır -- çünkü böyle bir beyan
+    varken metinde bulunan herhangi bir 3-4 haneli sayı UN NO DEĞİLDİR.
+
+    Gerçek vaka: Setaş/Nyloset asit boyaları. Bölüm 14 açıkça
+    "Ürün, tehlikeli maddelerin taşımacılığı hakkındaki uluslararası
+    yönetmelikler kapsamında değildir (IMDG, IATA, ADR/RID)" ve
+    "14.1. UN numarası -> Uygulanamaz." diyor. Buna rağmen sayfa üst
+    bilgisindeki tarihten UN 2017 atanmış, ürün envanterde Sınıf 6.1
+    mühimmat olarak görünmüştü.
+    """
+    if not sec14_text:
+        return False
+    t = re.sub(r"\s+", " ", sec14_text)
+    desenler = [
+        # "Ürün ... taşımacılığı hakkındaki ... yönetmelikler kapsamında değildir"
+        r"(?i)ta[şs][ıi]mac[ıi]l[ıi][ğg][ıi]?\s+hakk[ıi]ndaki[^.]{0,80}"
+        r"kapsam[ıi]nda\s+de[ğg]ildir",
+        r"(?i)(?:ADR|RID|IMDG|IATA)[^.]{0,60}kapsam[ıi]n?[ıa]?\s*"
+        r"(?:d[ıi][şs][ıi]nda|girmez|de[ğg]ildir)",
+        r"(?i)tehlikeli\s+(?:madde|mal)\s*(?:lar)?\s*(?:olarak)?\s*"
+        r"s[ıi]n[ıi]fland[ıi]r[ıi]lmam[ıi][şs]t[ıi]r[^.]{0,40}"
+        r"(?:ta[şs][ıi]ma|ADR|nakliye)",
+        # "14.1. UN numarası" alt başlığının değeri "Uygulanamaz/Yok"
+        r"(?i)14\s*\.?\s*1\b[^\n]{0,40}?[ÜU]N\s*numaras[ıi][^\n]{0,20}"
+        r"\s*:?\s*(?:Uygulanamaz|Uygulanmaz|Ge[çc]erli\s+de[ğg]il|"
+        r"[İIıi]lgili\s+de[ğg]il|Yok|Not\s+applicable|N\s*/\s*A)\b",
+    ]
+    return any(re.search(p, t) for p in desenler)
+
+
 def explicit_not_in_scope(section14_text: str) -> bool:
     """Bölüm 14'te 'tehlikeli maddelerin taşımacılığı ... kapsamında
     değildir (IMDG, IATA, ADR/RID)' veya İngilizce 'not included any
@@ -1588,7 +1625,25 @@ def _sec14_normalize(sec14_text: str) -> str:
         # indirilir -- sütun sınırı sinyali korunur, şişme kaybolur.
         satir = re.sub(r" {3,}", "  ", satir)
         satirlar.append(satir)
-    return "\n".join(satirlar)
+    metin = "\n".join(satirlar)
+
+    # ── TARİH/SÜRÜM MASKELEME (KRİTİK GÜVENLİK) ──────────────────────────
+    # Bölüm 14 çoğu MSDS'te sayfa sınırını aşar ve pdfplumber, sonraki
+    # sayfanın ÜST BİLGİSİNİ de bu bloğa katar. O üst bilgideki
+    # "Yeni düzenleme tarihi 8.8.2017" ifadesindeki 2017, UN numarası
+    # arayan desen tarafından geçerli bir UN NO sanılıyordu.
+    # ADR Tablo A'da UN 2017 = "MÜHİMMAT, GÖZ YAŞARTICI" -- yani ADR
+    # kapsamı DIŞINDAKİ bir tekstil boyası, envanterde patlayıcı olmayan
+    # mühimmat olarak görünüyordu. Bu yüzden tarih ve sürüm biçimindeki
+    # sayılar UN aramasından ÖNCE maskelenir.
+    #   maskelenen: 8.8.2017, 23/5/2017, 20.11.2013, 0.103
+    #   korunan   : 2.2, 5.1, 6.1 (sınıf/etiket kodları -- ondalık kısmı
+    #               en fazla 2 hane olduğu için desene takılmaz)
+    metin = re.sub(r"\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b",
+                   lambda m: " " * len(m.group(0)), metin)
+    metin = re.sub(r"\b\d{1,2}\.\d{3,}\b",
+                   lambda m: " " * len(m.group(0)), metin)
+    return metin
 
 
 def find_adr_block(section14_text: str):
@@ -2009,6 +2064,16 @@ def extract_adr_info(pdf_path: str, ai_chain: list = None, ai_models: dict = Non
     # Layout dolgu boşluklarını temizle — aşağıdaki TÜM desenler mesafe
     # pencerelerine dayandığı için bu adım zorunlu (bkz. _sec14_normalize).
     sec14 = _sec14_normalize(sec14)
+
+    # ── KESİN KAPSAM DIŞI KONTROLÜ (UN ARAMASINDAN ÖNCE) ────────────────
+    # Belge ürünün taşımacılık kapsamı dışında olduğunu AÇIKÇA söylüyorsa,
+    # metinde geçen hiçbir sayı UN numarası olarak yorumlanmamalıdır.
+    # Bu kontrol UN aramasından SONRA yapılırsa, sayfa üst bilgisinden
+    # sızan bir tarih (8.8.2017 -> "UN 2017") kapsam dışı beyanını ezip
+    # ürünü yanlışlıkla tehlikeli madde gösterir.
+    if kesin_kapsam_disi(sec14):
+        result["adr_kapsaminda"] = False
+        return result
 
     result["ham_metin_bulundu"] = True
 
