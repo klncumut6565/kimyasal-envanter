@@ -453,17 +453,22 @@ def fill_or_append_v2(envanter_path: str, output_path: str, urunler: list,
 
 
 def _etiket_gorseli_goml(ws, row, col, kodlar, hucre_yuksekligi=110,
-                          sutun_genisligi=None):
+                          sutun_genisligi=None, hedef_yukseklik_cm=None):
     """ADR/GHS etiket görsellerini hücreye, HÜCREDEN TAŞMADAN yerleştirir.
 
     Görseller hücrenin gerçek piksel boyutuna göre otomatik yerleşir:
     1, 2 veya 3 etiket için olası tüm ızgara düzenleri (yan yana, alt alta,
     2+1 karma) denenir ve simgeyi EN BÜYÜK gösteren düzen seçilir. Blok
-    hücre içinde ortalanır.
+    hücre içinde YATAY ve DİKEY olarak ortalanır.
+
+    hedef_yukseklik_cm verilirse simge yüksekliği o değere çekilir (hücreye
+    sığdığı ölçüde). Genişlik, kaynak PNG'nin EN-BOY ORANI korunarak
+    hesaplanır.
 
     Excel ölçü birimleri:
       sütun genişliği (karakter) -> piksel = genişlik * 7 + 5
       satır yüksekliği (punto)   -> piksel = punto * 96 / 72
+      1 cm -> 360000 EMU -> 37.8 piksel
     """
     if not kodlar:
         return
@@ -476,6 +481,7 @@ def _etiket_gorseli_goml(ws, row, col, kodlar, hucre_yuksekligi=110,
         return  # modül yoksa sessizce geç
 
     EMU = 9525          # 1 piksel = 9525 EMU
+    CM_PX = 360000 / EMU   # 1 cm = 37.795 piksel
     KENAR = 3           # hücre kenarından bırakılacak boşluk (px)
     ARA = 2             # simgeler arası boşluk (px)
 
@@ -484,44 +490,56 @@ def _etiket_gorseli_goml(ws, row, col, kodlar, hucre_yuksekligi=110,
         return
     n = len(kodlar)
 
+    # Kaynak görselin en-boy oranı (genişlik / yükseklik)
+    try:
+        _ilk = XLImage(png_akisi(kodlar[0]))
+        oran = (_ilk.width / _ilk.height) if _ilk.height else 1.0
+    except Exception:
+        oran = 1.0
+
     genislik_px = int((sutun_genisligi or 12) * 7 + 5)
     yukseklik_px = int(hucre_yuksekligi * 96 / 72)
     kul_g = max(16, genislik_px - 2 * KENAR)
     kul_y = max(16, yukseklik_px - 2 * KENAR)
 
+    # Üst sınır: istenen yükseklik (cm) varsa o, yoksa varsayılan 64 px.
+    tavan = int(hedef_yukseklik_cm * CM_PX) if hedef_yukseklik_cm else 64
+
     # Olası ızgara düzenleri: (sütun, satır). Hepsi n simgeyi alabilmeli.
-    adaylar = [(s, (n + s - 1) // s) for s in range(1, n + 1)]
-    en_iyi, en_iyi_kenar = None, 0
-    for suts, satirlar in adaylar:
-        kenar = min((kul_g - (suts - 1) * ARA) // suts,
-                    (kul_y - (satirlar - 1) * ARA) // satirlar)
-        if kenar > en_iyi_kenar:
-            en_iyi, en_iyi_kenar = (suts, satirlar), kenar
-    if not en_iyi or en_iyi_kenar < 8:
+    en_iyi, en_iyi_yuk = None, 0
+    for suts in range(1, n + 1):
+        satirlar = (n + suts - 1) // suts
+        # Yükseklik hem satır sayısına hem de (oran üzerinden) sütun
+        # sayısına göre sınırlanır -- böylece en-boy oranı hep korunur.
+        yuk = min((kul_y - (satirlar - 1) * ARA) // satirlar,
+                  int(((kul_g - (suts - 1) * ARA) / suts) / oran))
+        if yuk > en_iyi_yuk:
+            en_iyi, en_iyi_yuk = (suts, satirlar), yuk
+    if not en_iyi or en_iyi_yuk < 8:
         return
     suts, satirlar = en_iyi
-    kenar = min(en_iyi_kenar, 64)   # gereksiz büyümesin
+    yuk = min(en_iyi_yuk, tavan)
+    gen = max(8, int(round(yuk * oran)))
 
-    # Bloğu hücre içinde ortala
-    blok_g = suts * kenar + (suts - 1) * ARA
-    blok_y = satirlar * kenar + (satirlar - 1) * ARA
-    bas_x = KENAR + max(0, (kul_g - blok_g) // 2)
+    # Bloğu hücre içinde DİKEY olarak ortala
+    blok_y = satirlar * yuk + (satirlar - 1) * ARA
     bas_y = KENAR + max(0, (kul_y - blok_y) // 2)
 
     for i, kod in enumerate(kodlar):
         sut_i, sat_i = i % suts, i // suts
-        # Son satırdaki eksik simgeleri de ortala (örn. 3 simge, 2x2 ızgara)
+        # Her satırı KENDİ İÇİNDE yatay ortala (örn. 3 simge, 2x2 ızgarada
+        # ikinci satırda tek simge kalır -- o da ortalanır).
         bu_satirdaki = min(suts, n - sat_i * suts)
-        satir_g = bu_satirdaki * kenar + (bu_satirdaki - 1) * ARA
-        x = KENAR + max(0, (kul_g - satir_g) // 2) + sut_i * (kenar + ARA)
-        y = bas_y + sat_i * (kenar + ARA)
+        satir_g = bu_satirdaki * gen + (bu_satirdaki - 1) * ARA
+        x = KENAR + max(0, (kul_g - satir_g) // 2) + sut_i * (gen + ARA)
+        y = bas_y + sat_i * (yuk + ARA)
         try:
             img = XLImage(png_akisi(kod))
-            img.width = img.height = kenar
+            img.width, img.height = gen, yuk
             img.anchor = OneCellAnchor(
                 _from=AnchorMarker(col=col - 1, colOff=x * EMU,
                                     row=row - 1, rowOff=y * EMU),
-                ext=XDRPositiveSize2D(kenar * EMU, kenar * EMU))
+                ext=XDRPositiveSize2D(gen * EMU, yuk * EMU))
             ws.add_image(img)
         except Exception:
             continue
@@ -611,7 +629,8 @@ def add_products(envanter_path: str, output_path: str, urunler: list,
                     adr_etiket_kodlari(urun.get("_adr_etiket")),
                     hucre_yuksekligi=110,
                     sutun_genisligi=ws.column_dimensions[
-                        get_column_letter(adr_col)].width)
+                        get_column_letter(adr_col)].width,
+                    hedef_yukseklik_cm=3)   # ADR elması 3 cm yüksekliğinde
             teh_col = col_map.get(_norm("Tehlike Etiketi"))
             if teh_col:
                 _etiket_gorseli_goml(
