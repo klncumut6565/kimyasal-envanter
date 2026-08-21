@@ -249,6 +249,12 @@ def render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix, v
 st.title("🧪 Kimyasal Envanter Oluşturucu")
 st.caption("MSDS PDF → Bölüm 14 (Taşıma Bilgileri) → ADR Tablo A eşleştirme → Envanter Excel")
 
+# Firma bilgisi alanı — widget'lar sidebar KODUNUN İÇİNDE oluşturulmaya
+# devam eder (mantık/sıra hiç değişmez) ama bu container sayesinde ANA
+# EKRANDA, başlığın hemen altında tek sıra hâlinde render edilir. Böylece
+# sol menü gereksiz yer kaplamaz.
+firma_bilgi_alani = st.container()
+
 QR_KOD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "qr_kod.png")
 
 with st.sidebar:
@@ -290,19 +296,25 @@ with st.sidebar:
         )
 
         if mod_v3.startswith("🆕"):
-            st.caption("Firma bilgilerini girdiğinizde 22 sütunlu boş şablon otomatik "
-                       "hazırlanır (data/BOS_*.xlsx dosyası GEREKMEZ).")
-            firma_adi = st.text_input("Firma Adı", key="firma_adi_v3",
-                                       placeholder="Örn. ASUTEK")
-            firma_logo_file_v3 = st.file_uploader(
-                "Firma Logosu (opsiyonel, .png/.jpg)",
-                type=["png", "jpg", "jpeg"], key="firma_logo_v3")
-            hazirlayan_adi_v3 = st.text_input(
-                "Hazırlayan Adı (opsiyonel)", key="hazirlayan_adi_v3",
-                placeholder="Örn. Ahmet Yılmaz")
-            onaylayan_adi_v3 = st.text_input(
-                "Onaylayan Adı Soyadı (opsiyonel)", key="onaylayan_adi_v3",
-                placeholder="Örn. Mehmet Demir")
+            with firma_bilgi_alani:
+                st.caption("Firma bilgilerini girdiğinizde 22 sütunlu boş şablon "
+                           "otomatik hazırlanır (data/BOS_*.xlsx dosyası GEREKMEZ).")
+                _k1, _k2, _k3, _k4 = st.columns(4)
+                with _k1:
+                    firma_adi = st.text_input("Firma Adı", key="firma_adi_v3",
+                                               placeholder="Örn. ASUTEK")
+                with _k2:
+                    hazirlayan_adi_v3 = st.text_input(
+                        "Hazırlayan Adı (opsiyonel)", key="hazirlayan_adi_v3",
+                        placeholder="Örn. Ahmet Yılmaz")
+                with _k3:
+                    onaylayan_adi_v3 = st.text_input(
+                        "Onaylayan Adı Soyadı (opsiyonel)", key="onaylayan_adi_v3",
+                        placeholder="Örn. Mehmet Demir")
+                with _k4:
+                    firma_logo_file_v3 = st.file_uploader(
+                        "Firma Logosu (opsiyonel, .png/.jpg)",
+                        type=["png", "jpg", "jpeg"], key="firma_logo_v3")
 
             if firma_adi.strip():
                 firma_logo_path_v3 = (save_upload(firma_logo_file_v3, subdir="firma_logo_v3")
@@ -376,16 +388,25 @@ with st.sidebar:
         )
 
         if mod.startswith("🆕"):
-            st.caption("ADR Tablo A ve tüm başlık/imza biçimi programda hazır gelir; "
-                       "sadece firma bilgilerinizi girmeniz yeterli.")
-            firma_adi = st.text_input("Firma Adı", key="firma_adi",
-                                       placeholder="Örn. ASUTEK")
-            hazirlayan_adi = st.text_input("Hazırlayan Adı (Tehlikeli Madde Güvenlik Danışmanı)",
-                                            key="hazirlayan_adi", placeholder="Örn. Ahmet Yılmaz")
-            onaylayan_adi = st.text_input("Onaylayan Adı Soyadı (boş bırakılırsa \"Sorumlu Kişi\" yazılır)",
-                                           key="onaylayan_adi", placeholder="Örn. Mehmet Demir")
-            firma_logo_file = st.file_uploader(
-                "Firma Logosu (opsiyonel, .png/.jpg)", type=["png", "jpg", "jpeg"], key="firma_logo")
+            with firma_bilgi_alani:
+                st.caption("ADR Tablo A ve tüm başlık/imza biçimi programda hazır "
+                           "gelir; sadece firma bilgilerinizi girmeniz yeterli.")
+                _k1, _k2, _k3, _k4 = st.columns(4)
+                with _k1:
+                    firma_adi = st.text_input("Firma Adı", key="firma_adi",
+                                               placeholder="Örn. ASUTEK")
+                with _k2:
+                    hazirlayan_adi = st.text_input(
+                        "Hazırlayan Adı (TMGD)", key="hazirlayan_adi",
+                        placeholder="Örn. Ahmet Yılmaz")
+                with _k3:
+                    onaylayan_adi = st.text_input(
+                        "Onaylayan Adı Soyadı", key="onaylayan_adi",
+                        placeholder="Boş ise \"Sorumlu Kişi\" yazılır")
+                with _k4:
+                    firma_logo_file = st.file_uploader(
+                        "Firma Logosu (opsiyonel, .png/.jpg)",
+                        type=["png", "jpg", "jpeg"], key="firma_logo")
 
             if firma_adi.strip():
                 firma_logo_path = save_upload(firma_logo_file, subdir="firma_logo") if firma_logo_file else None
