@@ -780,6 +780,25 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
     secili_urunler = [u for u in st.session_state.urunler.values() if u["dahil_et"]]
     render_export_ui(secili_urunler, envanter_path, v2, firma_adi, key_suffix="bottom", v3=v3)
 elif not envanter_path:
-    st.info("Önce sol menüden envanter Excel dosyasını yükleyin.")
+    # Bu mesaj MODA DUYARLI olmalıdır. Aksi halde "🆕 Yeni envanter oluştur"
+    # modundaki kullanıcıya da "Excel dosyasını yükleyin" deniyordu — oysa o
+    # modda dosya yüklenmez, envanter firma adı girilince programın kendisi
+    # tarafından oluşturulur. Yükleme yalnızca "var olan envanteri güncelle"
+    # (ve her zaman Versiyon 2) akışında gereklidir.
+    if v2:
+        st.info("Versiyon 2, mevcut bir envanteri güncelleme modudur — "
+                "sol menüden Versiyon 2 formatındaki envanter Excel dosyasını yükleyin.")
+    elif v3:
+        if str(st.session_state.get("mod_v3", "")).startswith("🆕"):
+            st.info("Sol menüden **Firma Adı**'nı girin — 22 sütunlu yeni Sentez "
+                    "TMGD+İSG envanteri otomatik hazırlanacak. Excel yüklemenize gerek yok.")
+        else:
+            st.info("Sol menüden, güncellemek istediğiniz V3 envanter Excel dosyasını yükleyin.")
+    else:
+        if str(st.session_state.get("mod", "")).startswith("🆕"):
+            st.info("Sol menüden **Firma Adı**'nı girin — yeni envanter şablonu otomatik "
+                    "hazırlanacak. Excel yüklemenize gerek yok.")
+        else:
+            st.info("Sol menüden, güncellemek istediğiniz envanter Excel dosyasını yükleyin.")
 elif not st.session_state.urunler:
     st.info("İşlenecek MSDS PDF dosyalarını yükleyin.")
