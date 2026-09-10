@@ -11,7 +11,8 @@ from openpyxl import load_workbook
 from extractor import extract_adr_info, clean_product_name
 from ai_destek import ENGINE_LABELS, FAILOVER_ORDER, build_failover_chain
 from matcher import (build_inventory_row, build_inventory_row_v2, build_inventory_row_v3,
-                       NOT_IN_SCOPE_TEXT, MANUAL_REVIEW_TEXT, V3_SUTUNLAR, V3_MANUEL_SUTUNLAR)
+                       NOT_IN_SCOPE_TEXT, MANUAL_REVIEW_TEXT, V3_SUTUNLAR, V3_MANUEL_SUTUNLAR,
+                       get_official_sinif_for_un, match_tablo_a)
 from excel_writer import (add_products, fill_or_append_v2, create_new_envanter,
                             create_new_sentez_envanter, add_products_v3,
                             find_column, SHEET_NAME, HEADER_ROW)
@@ -59,6 +60,91 @@ def existing_names(envanter_path):
         return names
     except Exception:
         return set()
+
+
+def _atik_kolon_bul(ws, header_row_max=3):
+    """Atık listesi dosyasında 'Atık Kodu', 'UN No', 'Paketleme Grubu'
+    sütunlarının hangi satır/sütunda olduğunu esnek biçimde bulur."""
+    hedefler = {
+        "atik_kodu": ["atık kodu", "atik kodu", "atık kod", "kod"],
+        "un_no": ["un no", "un numarası", "un numarasi", "un kodu"],
+        "pg": ["paketleme grubu", "ambalaj grubu", "pg"],
+    }
+    for r in range(1, header_row_max + 1):
+        eslesme = {}
+        for c in range(1, ws.max_column + 1):
+            deger = ws.cell(row=r, column=c).value
+            if not deger:
+                continue
+            d = str(deger).strip().lower()
+            for anahtar, adaylar in hedefler.items():
+                if anahtar in eslesme:
+                    continue
+                if any(a in d for a in adaylar):
+                    eslesme[anahtar] = c
+        if {"atik_kodu", "un_no"}.issubset(eslesme):
+            return r, eslesme
+    return None, {}
+
+
+def oku_atik_listesi(dosya_path: str) -> tuple[list[dict], list[str]]:
+    """Atık Kodu / UN No / Paketleme Grubu sütunları içeren bir Excel
+    dosyasını okur. Her satır için ADR Tablo A'dan eşleşen kaydı bulur
+    (sınıf dosyada verilmediği için UN No üzerinden ADR'deki resmi sınıf
+    otomatik tespit edilir). Döndürür: (satirlar, uyarilar).
+    satirlar: [{"atik_kodu","un_no","pg","sinif","sevkiyat_adi","eslesti"}]
+    """
+    wb = load_workbook(dosya_path, data_only=True)
+    ws = wb.active
+
+    header_row, kolonlar = _atik_kolon_bul(ws)
+    if header_row is None:
+        raise ValueError(
+            "Dosyada 'Atık Kodu' ve 'UN No' sütunları bulunamadı. "
+            "Başlık satırında bu isimlerin geçtiğinden emin olun."
+        )
+
+    satirlar, uyarilar = [], []
+    for r in range(header_row + 1, ws.max_row + 1):
+        atik_kodu = ws.cell(row=r, column=kolonlar["atik_kodu"]).value
+        un_no = ws.cell(row=r, column=kolonlar["un_no"]).value
+        pg = ws.cell(row=r, column=kolonlar.get("pg", 0)).value if kolonlar.get("pg") else None
+
+        if atik_kodu is None or str(atik_kodu).strip() == "":
+            continue
+        atik_kodu = str(atik_kodu).strip()
+        if un_no is None or str(un_no).strip() == "":
+            uyarilar.append(f"Satır {r}: '{atik_kodu}' için UN No boş, atlandı.")
+            continue
+
+        if isinstance(un_no, float) and un_no.is_integer():
+            un_no = int(un_no)
+        un_no_str = re.sub(r"\D", "", str(un_no)).zfill(4)
+        pg_str = str(pg).strip().upper() if pg else None
+
+        sinif = get_official_sinif_for_un(TABLO_A_PATH, un_no_str)
+        if not sinif:
+            uyarilar.append(f"Satır {r}: UN {un_no_str} ADR Tablo A'da bulunamadı ('{atik_kodu}').")
+            satirlar.append({
+                "atik_kodu": atik_kodu, "un_no": un_no_str, "pg": pg_str,
+                "sinif": None, "sevkiyat_adi": None, "eslesti": False,
+            })
+            continue
+
+        match = match_tablo_a(TABLO_A_PATH, un_no_str, sinif, pg_str)
+        satirlar.append({
+            "atik_kodu": atik_kodu, "un_no": un_no_str, "pg": pg_str,
+            "sinif": sinif,
+            "sevkiyat_adi": match["isim"] if match else None,
+            "eslesti": match is not None,
+        })
+        if match is None:
+            uyarilar.append(
+                f"Satır {r}: UN {un_no_str} (Sınıf {sinif}, PG {pg_str or '-'}) "
+                f"Tablo A'da tam eşleşmedi ('{atik_kodu}') — manuel kontrol gerekir."
+            )
+
+    return satirlar, uyarilar
 
 
 def _sure_formatla(saniye: float) -> str:
@@ -476,7 +562,60 @@ with st.sidebar:
     else:
         st.caption("⚠️ QR kod bulunamadı: data/qr_kod.png")
 
-st.header("3) MSDS PDF'lerini Yükle")
+# ── Atık Listesi Yükle (Atık Kodu + UN No + Paketleme Grubu → Tablo A eşleşmesi) ──
+# ADR Tablo A eşleştirmesi sadece Versiyon 1'de yapıldığı için bu özellik de
+# sadece Versiyon 1'de sunulur.
+if not v2 and not v3:
+    st.header("3) Atık Listesi Yükle (opsiyonel)")
+    st.caption(
+        "Atık Kodu, UN No ve Paketleme Grubu sütunlarını içeren bir Excel dosyası "
+        "yükleyin. Her satır ADR Tablo A ile eşleştirilir; eşleşen sonuçlar aşağıda "
+        "'Atık Kodu - Uygun Sevkiyat Adı' şeklinde listelenir, işaretlediğiniz "
+        "satırlar Kimyasal Adı sütununa bu formatla eklenir."
+    )
+    atik_dosya = st.file_uploader(
+        "Atık Listesi Excel Dosyası (.xlsx)", type=["xlsx"], key="atik_uploader",
+    )
+    if atik_dosya is not None:
+        atik_anahtar = atik_dosya.name + str(atik_dosya.size)
+        if st.session_state.get("atik_son_anahtar") != atik_anahtar:
+            atik_path = save_upload(atik_dosya, subdir="atik")
+            try:
+                atik_satirlari, atik_uyarilari = oku_atik_listesi(atik_path)
+            except Exception as e:
+                st.error(f"❌ Atık listesi okunamadı: {e}")
+                atik_satirlari, atik_uyarilari = [], []
+
+            for i, s in enumerate(atik_satirlari):
+                kimyasal_adi = f"{s['atik_kodu']} - {s['sevkiyat_adi']}" if s["sevkiyat_adi"] \
+                    else f"{s['atik_kodu']} - EŞLEŞME BULUNAMADI"
+                st.session_state.urunler[f"ATIK::{s['atik_kodu']}::{i}"] = {
+                    "pdf_path": None,
+                    "info": {
+                        "un_no": s["un_no"], "sinif": s["sinif"],
+                        "paketleme_grubu": s["pg"], "siniflandirma_kodu": None,
+                        "adr_kapsaminda": s["eslesti"], "revize_tarihi": None,
+                        "tedarikci": None, "fonksiyon": None, "cas_no": None,
+                        "h_kodlari": None, "tehlikeli_tehlikesiz": None,
+                    },
+                    "kimyasal_adi": kimyasal_adi,
+                    "ambalaj": "AMBALAJLI",
+                    "logo_path": None,
+                    "dahil_et": s["eslesti"],
+                    "atik_kaynak": True,
+                }
+            st.session_state.atik_son_anahtar = atik_anahtar
+            if atik_uyarilari:
+                st.session_state.atik_son_uyarilar = atik_uyarilari
+            st.toast(f"✅ {len(atik_satirlari)} atık kodu işlendi", icon="✅")
+            st.rerun()
+
+        if st.session_state.get("atik_son_uyarilar"):
+            with st.expander(f"⚠️ {len(st.session_state.atik_son_uyarilar)} Uyarı", expanded=False):
+                for u in st.session_state.atik_son_uyarilar:
+                    st.caption(u)
+
+st.header("4) MSDS PDF'lerini Yükle")
 
 if "pdf_uploader_key" not in st.session_state:
     st.session_state.pdf_uploader_key = 0
