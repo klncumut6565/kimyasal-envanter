@@ -12,7 +12,7 @@ from extractor import extract_adr_info, clean_product_name
 from ai_destek import ENGINE_LABELS, FAILOVER_ORDER, build_failover_chain
 from matcher import (build_inventory_row, build_inventory_row_v2, build_inventory_row_v3,
                        NOT_IN_SCOPE_TEXT, MANUAL_REVIEW_TEXT, V3_SUTUNLAR, V3_MANUEL_SUTUNLAR,
-                       get_official_sinif_for_un, match_tablo_a)
+                       get_official_sinif_for_un, match_tablo_a, load_tablo_a)
 from atik_kodlari import ATIK_KODLARI
 from excel_writer import (add_products, fill_or_append_v2, create_new_envanter,
                             create_new_sentez_envanter, add_products_v3,
@@ -67,16 +67,53 @@ def existing_names(envanter_path):
 def atik_kodlari_eslestir() -> dict:
     """Statik ATIK_KODLARI listesindeki her kodu bu programın kendi ADR
     Tablo A dosyasıyla eşleştirir (UN No + Sınıf + Paketleme Grubu).
-    Sonuç, atık kodu -> {un_no, pg, sinif, sevkiyat_adi, eslesti} sözlüğüdür.
-    Sadece bir kez (ilk açılışta) hesaplanır ve önbelleğe alınır."""
+
+    Çoğu kod tek bir Tablo A satırıyla net eşleşir. Ancak bazı UN
+    numaralarının (örn. derişime göre değişen asitler) Tablo A'da BİRDEN
+    FAZLA olası Paketleme Grubu (PG) satırı vardır ve dosyadaki tek PG
+    bunlardan hangisi olduğunu belirlemeye yetmez. Bu durumda tek bir
+    sonuç yerine 'varyantlar' listesi döner — her PG seçeneği kullanıcıya
+    ayrı bir satır olarak sunulur, kullanıcı doğru olanı seçer.
+
+    Döner: atık kodu -> {
+        "eslesti": bool,                # tek/net eşleşme var mı
+        "un_no", "sinif", "pg", "sevkiyat_adi",   # eslesti=True ise dolu
+        "varyantlar": [{"pg","sinif","sevkiyat_adi"}] veya None,
+    }
+    """
+    rows = load_tablo_a(TABLO_A_PATH)
     sonuc = {}
     for kod, v in ATIK_KODLARI.items():
-        match = match_tablo_a(TABLO_A_PATH, v["un_no"], v["sinif"], v["pg"])
-        sonuc[kod] = {
-            "un_no": v["un_no"], "sinif": v["sinif"], "pg": v["pg"],
-            "sevkiyat_adi": match["isim"] if match else v["sevkiyat_adi"],
-            "eslesti": match is not None,
-        }
+        match = match_tablo_a(TABLO_A_PATH, v["un_no"], v["sinif"], v["pg"] or None)
+        if match:
+            sonuc[kod] = {
+                "eslesti": True, "un_no": v["un_no"], "sinif": v["sinif"],
+                "pg": v["pg"], "sevkiyat_adi": match["isim"], "varyantlar": None,
+            }
+            continue
+
+        # Net eşleşme yok — aynı UN+Sınıf için Tablo A'da başka hangi PG
+        # seçenekleri var, bak. Birden fazlaysa her biri ayrı varyant olur.
+        gercek_pgler = sorted(set(
+            r["paketleme_grubu"] for r in rows
+            if r["un_no"] == v["un_no"] and r["sinif"] == v["sinif"]
+        ), key=lambda x: (x is None, x))
+
+        if len(gercek_pgler) >= 2:
+            varyantlar = []
+            for pg in gercek_pgler:
+                m2 = match_tablo_a(TABLO_A_PATH, v["un_no"], v["sinif"], pg)
+                if m2:
+                    varyantlar.append({"pg": pg, "sinif": v["sinif"], "sevkiyat_adi": m2["isim"]})
+            sonuc[kod] = {
+                "eslesti": False, "un_no": v["un_no"], "sinif": v["sinif"],
+                "pg": v["pg"], "sevkiyat_adi": v["sevkiyat_adi"], "varyantlar": varyantlar,
+            }
+        else:
+            sonuc[kod] = {
+                "eslesti": False, "un_no": v["un_no"], "sinif": v["sinif"],
+                "pg": v["pg"], "sevkiyat_adi": v["sevkiyat_adi"], "varyantlar": None,
+            }
     return sonuc
 
 
@@ -526,58 +563,83 @@ if not v2 and not v3:
         ]
 
     with st.expander(f"📋 Atık Kodları Listesi ({len(tum_kodlar)} kod gösteriliyor)", expanded=False):
+        # Her satırın benzersiz anahtarı: varyantsız kodlar için kodun kendisi,
+        # varyantlı (birden fazla olası PG) kodlar için "KOD::PG" alt satırları.
+        satir_anahtarlari = []
+        for k in tum_kodlar:
+            e = eslesmeler[k]
+            if e["varyantlar"]:
+                for var in e["varyantlar"]:
+                    satir_anahtarlari.append(f"{k}::{var['pg'] or '-'}")
+            else:
+                satir_anahtarlari.append(k)
+
         col_a, col_b = st.columns([1, 1])
         with col_a:
             if st.button("Görünenlerin tümünü işaretle", key="atik_tumunu_isaretle"):
-                for k in tum_kodlar:
-                    st.session_state.atik_secim[k] = True
-                    st.session_state[f"atikcb_{k}"] = True  # widget'ın KENDİ state'i de güncellenmeli
+                for rk in satir_anahtarlari:
+                    st.session_state.atik_secim[rk] = True
+                    st.session_state[f"atikcb_{rk}"] = True  # widget'ın KENDİ state'i de güncellenmeli
                 st.rerun()
         with col_b:
             if st.button("Görünenlerin işaretini kaldır", key="atik_tumunu_kaldir"):
-                for k in tum_kodlar:
-                    st.session_state.atik_secim[k] = False
-                    st.session_state[f"atikcb_{k}"] = False
+                for rk in satir_anahtarlari:
+                    st.session_state.atik_secim[rk] = False
+                    st.session_state[f"atikcb_{rk}"] = False
                 st.rerun()
 
         SUTUN_SAYISI = 4
         sutunlar = st.columns(SUTUN_SAYISI)
-        for i, k in enumerate(tum_kodlar):
-            e = eslesmeler[k]
-            etiket = (f"**{k}** — {e['sevkiyat_adi']}" if e["eslesti"]
-                      else f"**{k}** — ⚠️ Tablo A'da tam eşleşmedi (manuel kontrol gerekir)")
-            cb_key = f"atikcb_{k}"
+        for i, rk in enumerate(satir_anahtarlari):
+            if "::" in rk:
+                k, pg_etiket = rk.split("::", 1)
+                var = next(v for v in eslesmeler[k]["varyantlar"] if (v["pg"] or "-") == pg_etiket)
+                etiket = f"**{k}** (PG {var['pg'] or '—'}) — {var['sevkiyat_adi']}"
+            else:
+                k = rk
+                e = eslesmeler[k]
+                etiket = (f"**{k}** — {e['sevkiyat_adi']}" if e["eslesti"]
+                          else f"**{k}** — ⚠️ Tablo A'da tam eşleşmedi (manuel kontrol gerekir)")
+            cb_key = f"atikcb_{rk}"
             with sutunlar[i % SUTUN_SAYISI]:
                 if cb_key in st.session_state:
                     # Widget'ın kendi state'i zaten var (önceki etkileşim veya
                     # "tümünü işaretle/kaldır" butonu) — value= VERMİYORUZ,
                     # yoksa Streamlit "hem value hem session_state" uyarısı verir.
-                    st.session_state.atik_secim[k] = st.checkbox(etiket, key=cb_key)
+                    st.session_state.atik_secim[rk] = st.checkbox(etiket, key=cb_key)
                 else:
-                    st.session_state.atik_secim[k] = st.checkbox(
-                        etiket, value=st.session_state.atik_secim.get(k, False), key=cb_key,
+                    st.session_state.atik_secim[rk] = st.checkbox(
+                        etiket, value=st.session_state.atik_secim.get(rk, False), key=cb_key,
                     )
 
-    secili_kodlar = [k for k, secili in st.session_state.atik_secim.items() if secili]
-    st.write(f"**{len(secili_kodlar)} atık kodu** işaretlendi.")
+    secili_satirlar = [rk for rk, secili in st.session_state.atik_secim.items() if secili]
+    st.write(f"**{len(secili_satirlar)} satır** işaretlendi.")
 
-    if st.button("➕ İşaretlileri Listeye Ekle", disabled=len(secili_kodlar) == 0,
+    if st.button("➕ İşaretlileri Listeye Ekle", disabled=len(secili_satirlar) == 0,
                   type="primary", key="atik_ekle_btn"):
-        for kod in secili_kodlar:
-            e = eslesmeler[kod]
-            kimyasal_adi = f"{kod} - {e['sevkiyat_adi']}" if e["sevkiyat_adi"] \
-                else f"{kod} - EŞLEŞME BULUNAMADI"
-            st.session_state.urunler[f"ATIK::{kod}"] = {
+        for rk in secili_satirlar:
+            if "::" in rk:
+                kod, pg_etiket = rk.split("::", 1)
+                e_kod = eslesmeler[kod]
+                var = next(v for v in e_kod["varyantlar"] if (v["pg"] or "-") == pg_etiket)
+                un_no, sinif, pg, sevkiyat_adi, eslesti = e_kod["un_no"], var["sinif"], var["pg"], var["sevkiyat_adi"], True
+            else:
+                kod = rk
+                e = eslesmeler[kod]
+                un_no, sinif, pg, sevkiyat_adi, eslesti = e["un_no"], e["sinif"], e["pg"], e["sevkiyat_adi"], e["eslesti"]
+
+            kimyasal_adi = f"{kod} - {sevkiyat_adi}" if sevkiyat_adi else f"{kod} - EŞLEŞME BULUNAMADI"
+            st.session_state.urunler[f"ATIK::{rk}"] = {
                 "pdf_path": None,
                 "info": {
-                    "un_no": e["un_no"], "sinif": e["sinif"],
-                    "paketleme_grubu": e["pg"], "siniflandirma_kodu": None,
+                    "un_no": un_no, "sinif": sinif,
+                    "paketleme_grubu": pg, "siniflandirma_kodu": None,
                     # eslesti=True -> Tablo A satırı bulundu (True).
                     # eslesti=False -> "ADR kapsamında değil" DEĞİL, sadece tam
                     # eşleşme yok demektir; build_inventory_row'da None
                     # geçilirse "MANUEL KONTROL GEREKLİ" olarak işaretlenir
                     # (yanlışlıkla "kapsam dışı" yazılmasını önler).
-                    "adr_kapsaminda": True if e["eslesti"] else None,
+                    "adr_kapsaminda": True if eslesti else None,
                     "revize_tarihi": None,
                     "tedarikci": None, "fonksiyon": None, "cas_no": None,
                     "h_kodlari": None, "tehlikeli_tehlikesiz": None,
@@ -588,7 +650,7 @@ if not v2 and not v3:
                 "dahil_et": True,
                 "atik_kaynak": True,
             }
-        st.toast(f"✅ {len(secili_kodlar)} atık kodu listeye eklendi", icon="✅")
+        st.toast(f"✅ {len(secili_satirlar)} atık kodu listeye eklendi", icon="✅")
         st.rerun()
 
 st.header("4) MSDS PDF'lerini Yükle")
