@@ -531,20 +531,32 @@ if not v2 and not v3:
             if st.button("Görünenlerin tümünü işaretle", key="atik_tumunu_isaretle"):
                 for k in tum_kodlar:
                     st.session_state.atik_secim[k] = True
+                    st.session_state[f"atikcb_{k}"] = True  # widget'ın KENDİ state'i de güncellenmeli
                 st.rerun()
         with col_b:
             if st.button("Görünenlerin işaretini kaldır", key="atik_tumunu_kaldir"):
                 for k in tum_kodlar:
                     st.session_state.atik_secim[k] = False
+                    st.session_state[f"atikcb_{k}"] = False
                 st.rerun()
 
-        for k in tum_kodlar:
+        SUTUN_SAYISI = 4
+        sutunlar = st.columns(SUTUN_SAYISI)
+        for i, k in enumerate(tum_kodlar):
             e = eslesmeler[k]
             etiket = (f"**{k}** — {e['sevkiyat_adi']}" if e["eslesti"]
                       else f"**{k}** — ⚠️ Tablo A'da tam eşleşmedi (manuel kontrol gerekir)")
-            st.session_state.atik_secim[k] = st.checkbox(
-                etiket, value=st.session_state.atik_secim.get(k, False), key=f"atikcb_{k}",
-            )
+            cb_key = f"atikcb_{k}"
+            with sutunlar[i % SUTUN_SAYISI]:
+                if cb_key in st.session_state:
+                    # Widget'ın kendi state'i zaten var (önceki etkileşim veya
+                    # "tümünü işaretle/kaldır" butonu) — value= VERMİYORUZ,
+                    # yoksa Streamlit "hem value hem session_state" uyarısı verir.
+                    st.session_state.atik_secim[k] = st.checkbox(etiket, key=cb_key)
+                else:
+                    st.session_state.atik_secim[k] = st.checkbox(
+                        etiket, value=st.session_state.atik_secim.get(k, False), key=cb_key,
+                    )
 
     secili_kodlar = [k for k, secili in st.session_state.atik_secim.items() if secili]
     st.write(f"**{len(secili_kodlar)} atık kodu** işaretlendi.")
