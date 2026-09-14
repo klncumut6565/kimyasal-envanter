@@ -549,6 +549,13 @@ if not v2 and not v3:
 
     eslesmeler = atik_kodlari_eslestir()
 
+    def _tr_lower(s: str) -> str:
+        # Python'un varsayılan str.lower() Türkçe 'İ' harfini yanlış küçültür
+        # ("İ" -> "i̇", noktası ayrı bir birleşik karakter olarak kalır ve
+        # kullanıcının yazdığı düz "i" ile asla eşleşmez). Önce Türkçe I/İ
+        # harflerini ASCII eşdeğerine çevirip öyle küçültüyoruz.
+        return s.replace("İ", "i").replace("I", "ı").lower()
+
     arama = st.text_input(
         "🔍 Atık kodu veya açıklamada ara", key="atik_arama",
         placeholder="Örn: 070214 veya sülfürik",
@@ -556,13 +563,17 @@ if not v2 and not v3:
 
     tum_kodlar = sorted(eslesmeler.keys())
     if arama.strip():
-        a = arama.strip().lower()
+        a = _tr_lower(arama.strip())
+        a_rakam = re.sub(r"[^a-z0-9ığüşöç]", "", a)  # "070214" -> "07 02 14*" ile de eşleşsin
         tum_kodlar = [
             k for k in tum_kodlar
-            if a in k.lower() or a in (eslesmeler[k]["sevkiyat_adi"] or "").lower()
+            if a in _tr_lower(k)
+            or a in _tr_lower(eslesmeler[k]["sevkiyat_adi"] or "")
+            or (a_rakam and a_rakam in re.sub(r"[^a-z0-9ığüşöç]", "", _tr_lower(k)))
         ]
 
-    with st.expander(f"📋 Atık Kodları Listesi ({len(tum_kodlar)} kod gösteriliyor)", expanded=False):
+    with st.expander(f"📋 Atık Kodları Listesi ({len(tum_kodlar)} kod gösteriliyor)",
+                      expanded=bool(arama.strip())):
         # Her satırın benzersiz anahtarı: varyantsız kodlar için kodun kendisi,
         # varyantlı (birden fazla olası PG) kodlar için "KOD::PG" alt satırları.
         satir_anahtarlari = []
