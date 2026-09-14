@@ -601,7 +601,8 @@ if not v2 and not v3:
 
         SUTUN_SAYISI = 4
         sutunlar = st.columns(SUTUN_SAYISI)
-        for i, rk in enumerate(satir_anahtarlari):
+
+        def _satir_ciz(rk):
             if "::" in rk:
                 k, pg_etiket = rk.split("::", 1)
                 var = next(v for v in eslesmeler[k]["varyantlar"] if (v["pg"] or "-") == pg_etiket)
@@ -612,16 +613,29 @@ if not v2 and not v3:
                 etiket = (f"**{k}** — {e['sevkiyat_adi']}" if e["eslesti"]
                           else f"**{k}** — ⚠️ Tablo A'da tam eşleşmedi (manuel kontrol gerekir)")
             cb_key = f"atikcb_{rk}"
-            with sutunlar[i % SUTUN_SAYISI]:
-                if cb_key in st.session_state:
-                    # Widget'ın kendi state'i zaten var (önceki etkileşim veya
-                    # "tümünü işaretle/kaldır" butonu) — value= VERMİYORUZ,
-                    # yoksa Streamlit "hem value hem session_state" uyarısı verir.
-                    st.session_state.atik_secim[rk] = st.checkbox(etiket, key=cb_key)
-                else:
-                    st.session_state.atik_secim[rk] = st.checkbox(
-                        etiket, value=st.session_state.atik_secim.get(rk, False), key=cb_key,
-                    )
+            if cb_key in st.session_state:
+                # Widget'ın kendi state'i zaten var (önceki etkileşim veya
+                # "tümünü işaretle/kaldır" butonu) — value= VERMİYORUZ,
+                # yoksa Streamlit "hem value hem session_state" uyarısı verir.
+                st.session_state.atik_secim[rk] = st.checkbox(etiket, key=cb_key)
+            else:
+                st.session_state.atik_secim[rk] = st.checkbox(
+                    etiket, value=st.session_state.atik_secim.get(rk, False), key=cb_key,
+                )
+
+        # Sütun bazlı (dikey) sıralama: liste zaten atık kodu numarasına göre
+        # küçükten büyüğe sıralı (satir_anahtarlari). Satır satır (yatay)
+        # doldurmak yerine, her sütunu KENDİ İÇİNDE yukarıdan aşağıya sıralı
+        # tutmak için listeyi SUTUN_SAYISI adet ardışık parçaya bölüyoruz —
+        # böylece bir sütunu tek başına takip eden kullanıcı da sırayı doğru
+        # (en küçük en üstte) görür.
+        toplam = len(satir_anahtarlari)
+        satir_sayisi = -(-toplam // SUTUN_SAYISI)  # yukarı yuvarlama
+        for col_idx in range(SUTUN_SAYISI):
+            parca = satir_anahtarlari[col_idx * satir_sayisi: (col_idx + 1) * satir_sayisi]
+            with sutunlar[col_idx]:
+                for rk in parca:
+                    _satir_ciz(rk)
 
     secili_satirlar = [rk for rk, secili in st.session_state.atik_secim.items() if secili]
     st.write(f"**{len(secili_satirlar)} satır** işaretlendi.")
