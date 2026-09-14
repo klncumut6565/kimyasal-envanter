@@ -574,16 +574,21 @@ if not v2 and not v3:
 
     with st.expander(f"📋 Atık Kodları Listesi ({len(tum_kodlar)} kod gösteriliyor)",
                       expanded=bool(arama.strip())):
-        # Her satırın benzersiz anahtarı: varyantsız kodlar için kodun kendisi,
-        # varyantlı (birden fazla olası PG) kodlar için "KOD::PG" alt satırları.
-        satir_anahtarlari = []
+        # Her kod için bir "grup" oluşturuyoruz: varyantsız kodlarda grup tek
+        # satırdan (kodun kendisi) oluşur; varyantlı kodlarda grup, kodun
+        # başlığı + altında girintili PG seçenekleri şeklinde birden çok
+        # satırdan oluşur. Gruplar bölünmeden (başlığı bir sütunda, alt
+        # seçeneği başka sütunda kalmayacak şekilde) sütunlara dağıtılır.
+        gruplar = []  # [{"kod": k, "varyant_mi": bool, "satirlar": [rk, ...]}]
         for k in tum_kodlar:
             e = eslesmeler[k]
             if e["varyantlar"]:
-                for var in e["varyantlar"]:
-                    satir_anahtarlari.append(f"{k}::{var['pg'] or '-'}")
+                satirlar = [f"{k}::{var['pg'] or '-'}" for var in e["varyantlar"]]
+                gruplar.append({"kod": k, "varyant_mi": True, "satirlar": satirlar})
             else:
-                satir_anahtarlari.append(k)
+                gruplar.append({"kod": k, "varyant_mi": False, "satirlar": [k]})
+
+        satir_anahtarlari = [rk for g in gruplar for rk in g["satirlar"]]
 
         col_a, col_b = st.columns([1, 1])
         with col_a:
@@ -599,43 +604,65 @@ if not v2 and not v3:
                     st.session_state[f"atikcb_{rk}"] = False
                 st.rerun()
 
-        SUTUN_SAYISI = 4
-        sutunlar = st.columns(SUTUN_SAYISI)
+        def _secenek_ciz(rk):
+            k, pg_etiket = rk.split("::", 1)
+            var = next(v for v in eslesmeler[k]["varyantlar"] if (v["pg"] or "-") == pg_etiket)
+            etiket = f"PG {var['pg'] or '—'} — {var['sevkiyat_adi']}"
+            cb_key = f"atikcb_{rk}"
+            _bos, _icerik = st.columns([0.15, 0.85])  # girinti efekti için bos sutun
+            with _icerik:
+                if cb_key in st.session_state:
+                    # Widget'ın kendi state'i zaten var (önceki etkileşim veya
+                    # "tümünü işaretle/kaldır" butonu) — value= VERMİYORUZ,
+                    # yoksa Streamlit "hem value hem session_state" uyarısı verir.
+                    st.session_state.atik_secim[rk] = st.checkbox(etiket, key=cb_key)
+                else:
+                    st.session_state.atik_secim[rk] = st.checkbox(
+                        etiket, value=st.session_state.atik_secim.get(rk, False), key=cb_key,
+                    )
 
-        def _satir_ciz(rk):
-            if "::" in rk:
-                k, pg_etiket = rk.split("::", 1)
-                var = next(v for v in eslesmeler[k]["varyantlar"] if (v["pg"] or "-") == pg_etiket)
-                etiket = f"**{k}** (PG {var['pg'] or '—'}) — {var['sevkiyat_adi']}"
+        def _grup_ciz(g):
+            if g["varyant_mi"]:
+                st.markdown(
+                    f"**{g['kod']}** atığı — birden fazla olası paketleme grubu var, "
+                    f"tesisinize uyan seçeneği işaretleyin:"
+                )
+                for rk in g["satirlar"]:
+                    _secenek_ciz(rk)
             else:
-                k = rk
+                k = g["kod"]
                 e = eslesmeler[k]
                 etiket = (f"**{k}** — {e['sevkiyat_adi']}" if e["eslesti"]
                           else f"**{k}** — ⚠️ Tablo A'da tam eşleşmedi (manuel kontrol gerekir)")
-            cb_key = f"atikcb_{rk}"
-            if cb_key in st.session_state:
-                # Widget'ın kendi state'i zaten var (önceki etkileşim veya
-                # "tümünü işaretle/kaldır" butonu) — value= VERMİYORUZ,
-                # yoksa Streamlit "hem value hem session_state" uyarısı verir.
-                st.session_state.atik_secim[rk] = st.checkbox(etiket, key=cb_key)
-            else:
-                st.session_state.atik_secim[rk] = st.checkbox(
-                    etiket, value=st.session_state.atik_secim.get(rk, False), key=cb_key,
-                )
+                rk = g["satirlar"][0]
+                cb_key = f"atikcb_{rk}"
+                if cb_key in st.session_state:
+                    st.session_state.atik_secim[rk] = st.checkbox(etiket, key=cb_key)
+                else:
+                    st.session_state.atik_secim[rk] = st.checkbox(
+                        etiket, value=st.session_state.atik_secim.get(rk, False), key=cb_key,
+                    )
 
-        # Sütun bazlı (dikey) sıralama: liste zaten atık kodu numarasına göre
-        # küçükten büyüğe sıralı (satir_anahtarlari). Satır satır (yatay)
-        # doldurmak yerine, her sütunu KENDİ İÇİNDE yukarıdan aşağıya sıralı
-        # tutmak için listeyi SUTUN_SAYISI adet ardışık parçaya bölüyoruz —
-        # böylece bir sütunu tek başına takip eden kullanıcı da sırayı doğru
-        # (en küçük en üstte) görür.
-        toplam = len(satir_anahtarlari)
-        satir_sayisi = -(-toplam // SUTUN_SAYISI)  # yukarı yuvarlama
-        for col_idx in range(SUTUN_SAYISI):
-            parca = satir_anahtarlari[col_idx * satir_sayisi: (col_idx + 1) * satir_sayisi]
+        # Sütun bazlı (dikey) dağıtım: gruplar zaten atık kodu numarasına göre
+        # küçükten büyüğe sıralı. Ağırlık = grubun kapladığı satır sayısı
+        # (varyantlı gruplarda başlık + PG seçenekleri). Toplam ağırlığı 4
+        # sütuna dengeli, GRUBU BÖLMEDEN dağıtıyoruz — böylece bir kodun
+        # başlığıyla alt seçenekleri her zaman aynı sütunda kalır.
+        SUTUN_SAYISI = 4
+        sutunlar = st.columns(SUTUN_SAYISI)
+        agirliklar = [1 + len(g["satirlar"]) if g["varyant_mi"] else 1 for g in gruplar]
+        toplam_agirlik = sum(agirliklar)
+        hedef = toplam_agirlik / SUTUN_SAYISI
+
+        col_idx = 0
+        biriken = 0
+        for g, agirlik in zip(gruplar, agirliklar):
+            if biriken >= hedef and col_idx < SUTUN_SAYISI - 1:
+                col_idx += 1
+                biriken = 0
             with sutunlar[col_idx]:
-                for rk in parca:
-                    _satir_ciz(rk)
+                _grup_ciz(g)
+            biriken += agirlik
 
     secili_satirlar = [rk for rk, secili in st.session_state.atik_secim.items() if secili]
     st.write(f"**{len(secili_satirlar)} satır** işaretlendi.")
