@@ -6,6 +6,7 @@ import tempfile
 import time
 
 import streamlit as st
+from st_keyup import st_keyup
 from openpyxl import load_workbook
 
 from extractor import extract_adr_info, clean_product_name
@@ -556,10 +557,10 @@ if not v2 and not v3:
         # harflerini ASCII eşdeğerine çevirip öyle küçültüyoruz.
         return s.replace("İ", "i").replace("I", "ı").lower()
 
-    arama = st.text_input(
+    arama = st_keyup(
         "🔍 Atık kodu veya açıklamada ara", key="atik_arama",
-        placeholder="Örn: 070214 veya sülfürik",
-    )
+        placeholder="Örn: 070214 veya sülfürik", debounce=200,
+    ) or ""
 
     tum_kodlar = sorted(eslesmeler.keys())
     if arama.strip():
