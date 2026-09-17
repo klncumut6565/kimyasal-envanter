@@ -34,8 +34,25 @@ def clean_product_name(name: str) -> str:
     return s
 
 
+# Metnin ANLAMLI olup olmadığını anlamak için aranan yaygın kelimeler.
+#
+# ÖNEMLİ: Liste önceden yalnızca TÜRKÇE kelimeler içeriyordu. Bu yüzden
+# İngilizce bir MSDS sayfası -- metni kusursuz okunmuş olsa bile -- "bozuk"
+# sayılıyor ve gereksiz yere OCR'a düşüyordu. OCR hem yavaştır (~0,6 sn/sayfa)
+# hem de lang="tur" ile İngilizce metni okuduğu için ZATEN DOĞRU olan gömülü
+# metni daha kötüsüyle değiştiriyordu. İngilizce karşılıklar eklendi.
+# Sesli harfler (TR + EN). Bozuk kodlamayı sözlükten bağımsız tespit etmek
+# için kullanılır; bkz. _metin_bozuk_mu.
+_SESLI_HARFLER = frozenset("aeıioöuüAEIİOÖUÜ")
+
 _YAYGIN_KELIMELER = re.compile(
-    r"\b(ve|veya|için|ile|bilgi|g[üu]venlik|tarih|madde|ürün|sayfa)\b",
+    r"\b("
+    # Türkçe
+    r"ve|veya|için|ile|bilgi|g[üu]venlik|tarih|madde|ürün|sayfa"
+    # İngilizce (MSDS/SDS belgelerinde neredeyse her sayfada geçer)
+    r"|and|or|for|with|the|of|information|safety|data|sheet"
+    r"|product|section|page|hazard|substance|mixture|transport"
+    r")\b",
     re.IGNORECASE)
 
 
@@ -62,10 +79,24 @@ def _metin_bozuk_mu(text: str) -> bool:
     harfler = [c for c in text if c.isalpha()]
     if len(harfler) < max(10, len(text) * 0.05):
         return True
-    # Yeterince uzun bir metinde (>= 80 karakter) hiç yaygın Türkçe kelime
-    # geçmiyorsa, kodlama muhtemelen bozuktur.
+    # Yeterince uzun bir metinde (>= 80 karakter) hiç yaygın kelime geçmiyorsa
+    # metin ŞÜPHELİDİR -- ama tek başına bu yeterli bir kanıt DEĞİLDİR:
+    # yalnızca bileşen/CAS tablosundan oluşan bir sayfa (örn. "Component CAS
+    # Number Polydimethylsiloxane 63148-62-9") hiç yaygın kelime içermez ama
+    # metni kusursuzdur. Bu yüzden ikinci ve bağımsız bir ölçüt aranır:
+    # SESLİ HARF ORANI.
+    #
+    # Gerçek metinde (TR veya EN) sesli harfler harflerin ~%33-45'ini
+    # oluşturur. Yer-değiştirme şifresine dönmüş Type3 metinlerde ise bu oran
+    # belirgin biçimde düşer (ölçüm: "?@ABCD@?E FGHH@I CJKL..." -> %20,
+    # simge kodlaması -> %4). Eşik %27 seçildi; ölçülen en düşük gerçek metin
+    # (%33, saf CAS tablosu) ile en yüksek bozuk metin (%20) arasında güvenli
+    # bir aralıkta duruyor.
     if len(text.strip()) >= 80 and not _YAYGIN_KELIMELER.search(text):
-        return True
+        harf_sayisi = len(harfler)
+        sesli = sum(1 for c in harfler if c in _SESLI_HARFLER)
+        if harf_sayisi == 0 or (sesli / harf_sayisi) < 0.27:
+            return True
     return False
 
 
@@ -1509,6 +1540,96 @@ def extract_full_info(pdf_path: str, text: str = None, ai_chain: list = None,
     return sonuc
 
 
+# ---------------------------------------------------------------------------
+# ETİKETLİ TAŞIMA BİLGİSİ ("Yöntem 3")
+# ---------------------------------------------------------------------------
+# Mevcut yöntemler UN numarasını yalnızca "UN 1993" gibi rakamın hemen
+# geldiği biçimde arıyordu (desen: \bUN\s*[-]?\s*(\d{3,4})\b). Bu yüzden
+# ETİKET + İKİ NOKTA biçimleri kaçıyordu:
+#     "UN number   : 1993"   "UN No: 1993"   "UN-No. : 1266"
+# Ölçüm: 225 İngilizce MSDS'te UN no yalnızca 6 belgede bulunabiliyordu.
+#
+# Aşağıdaki desenler bu biçimleri kapsar; TR ve EN etiketleri birlikte
+# destekler.
+
+# UN numarası: etiketten sonra iki nokta/boşluk, ardından 4 hane.
+_UN_ETIKETLI = re.compile(
+    r"\bUN[\s\-]*(?:no|nr|number|numarasi|numarası)?\s*[.:]?\s*(\d{4})\b",
+    re.IGNORECASE)
+
+# Sınıf: "ADR/RID Class :3", "Class: 3", "Sınıf: 3", "Zararlılık sınıfı: 8"
+# ADR/RID satırı varsa ONA öncelik verilir; yoksa genel "Class/Sınıf".
+_SINIF_ADR = re.compile(
+    r"(?:ADR|RID|ADR\s*/\s*RID)[^\n:]{0,30}?"
+    r"(?:class|sinif|sınıf)\s*[.:]?\s*(\d(?:\.\d)?)\b",
+    re.IGNORECASE)
+_SINIF_GENEL = re.compile(
+    r"(?:transport\s+hazard\s+class|hazard\s+class|class|s[ıi]n[ıi]f[ıi]?)"
+    r"\s*[.:]?\s*(\d(?:\.\d)?)\b",
+    re.IGNORECASE)
+
+# Paketleme grubu: "Packing group: II", "Ambalaj grubu : II"
+_PG_ETIKETLI = re.compile(
+    r"(?:packing\s*group|ambalaj\s*g[ur]{1,2}ubu|ambalajlama\s*grubu)"
+    r"\s*[.:]?\s*(I{1,3}|IV)\b",
+    re.IGNORECASE)
+
+
+def _eksik_alanlari_tamamla(result: dict, sec14: str) -> dict:
+    """Bir yöntem UN numarasını bulmuş ama sınıf/paketleme grubunu
+    bulamamışsa, eksik alanları ETİKETLİ desenlerden tamamlar.
+
+    Gerekçe: parse_numbered_subsections gibi yöntemler kendi formatlarında
+    UN + PG bulup sınıfı boş bırakabiliyor ve SONUCU HEMEN döndürdüğü için
+    etiketli desenler (Yöntem 3) hiç çalışmıyordu. Örn. "UN No: 1993 /
+    Zararlılık sınıfı: 3" belgesinde sınıf boş kalıyordu. Bu fonksiyon
+    yalnızca BOŞ alanları doldurur; bulunmuş bir değeri asla ezmez.
+    """
+    if result.get("sinif") and result.get("paketleme_grubu"):
+        return result
+    m_sinif = _SINIF_ADR.search(sec14) or _SINIF_GENEL.search(sec14)
+    m_pg = _PG_ETIKETLI.search(sec14)
+    if not result.get("sinif") and m_sinif:
+        result["sinif"] = m_sinif.group(1)
+    if not result.get("paketleme_grubu") and m_pg:
+        result["paketleme_grubu"] = m_pg.group(1).upper()
+    return result
+
+
+def _etiketli_tasima_bilgisi(sec14: str):
+    """Bölüm 14 metninden etiketli biçimde UN no / sınıf / paketleme grubu
+    çıkarır. UN numarası bulunamazsa None döner (sınıf/PG tek başına
+    "ADR kapsamında" kararı vermek için yeterli sayılmaz).
+
+    UN numarası için aralık kontrolü yapılır: geçerli UN numaraları 0004-3600
+    aralığındadır. Bu kontrol, metinde geçen yıl (2015) veya mevzuat numarası
+    gibi dört haneli sayıların UN numarası sanılmasını engeller.
+    """
+    if not sec14:
+        return None
+
+    un_no = None
+    for m in _UN_ETIKETLI.finditer(sec14):
+        # "UN 2015/830" gibi mevzuat referanslarını ele: rakamdan hemen
+        # sonra "/" geliyorsa bu bir UN numarası değildir.
+        if sec14[m.end():m.end() + 1] == "/":
+            continue
+        deger = int(m.group(1))
+        if 4 <= deger <= 3600:
+            un_no = m.group(1)
+            break
+    if not un_no:
+        return None
+
+    m_sinif = _SINIF_ADR.search(sec14) or _SINIF_GENEL.search(sec14)
+    m_pg = _PG_ETIKETLI.search(sec14)
+    return {
+        "un_no": un_no,
+        "sinif": m_sinif.group(1) if m_sinif else None,
+        "paketleme_grubu": m_pg.group(1).upper() if m_pg else None,
+    }
+
+
 def find_section14_text(text: str):
     """Bölüm 14'ün başlangıcını ve bitişini bul.
 
@@ -1524,14 +1645,35 @@ def find_section14_text(text: str):
     pattern = r"(?im)^\s*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*14\s*(?:[-.:]\s*|\s+(?=[A-ZÇĞİÖŞÜa-zçğışöü]))"
     m_start = re.search(pattern, text)
     if not m_start:
-        # Fallback: başlık resimde kalmış olabilir; ilk "14.1" alt başlığından itibaren al
+        # Fallback 1: başlık SATIR BAŞINDA değil.
+        # Bazı şablonlarda (özellikle İngilizce kozmetik MSDS'lerinde) başlık
+        # bir önceki cümleye yapışık geliyor:
+        #   "...disposed of in a safe way. 14 TRANSPORT INFORMATION"
+        # Bu durumda yukarıdaki ^ çapası tutmuyor ve Bölüm 14 hiç
+        # bulunamıyordu. Yanlış eşleşmeyi (telefon/tarih içindeki "14")
+        # önlemek için 14'ten SONRA taşıma anahtar kelimesi ZORUNLU tutulur.
+        m_start = re.search(
+            r"(?i)(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*\b14\b\s*[-.:]?\s*"
+            r"(?=[^\n]{0,20}(TRANSPORT|TA[ŞS]IMA|TA[ŞS]IMACILIK|NAKL[İI]YE))",
+            text)
+    if not m_start:
+        # Fallback 2: başlık resimde kalmış olabilir; ilk "14.1" alt başlığından itibaren al
         m_start = re.search(r"(?im)^\s*14\.1\b", text)
         if not m_start:
             return None
     start = m_start.start()
     end_pattern = r"(?im)^\s*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*15\s*(?:[-.:]\s*|\s+(?=[A-ZÇĞİÖŞÜa-zçğışöü]))"
-    m_end = re.search(end_pattern, text[start:])
-    end = start + m_end.start() if m_end else len(text)
+    m_end = re.search(end_pattern, text[start + 1:])
+    if m_end:
+        m_end_pos = start + 1 + m_end.start()
+    else:
+        # Bitiş başlığı da satır ortasında olabilir (bkz. yukarıdaki Fallback 1).
+        m_end2 = re.search(
+            r"(?i)(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*\b15\b\s*[-.:]?\s*"
+            r"(?=[^\n]{0,25}(MEVZUAT|REGULAT|YASAL|LEGAL))",
+            text[start + 1:])
+        m_end_pos = start + 1 + m_end2.start() if m_end2 else None
+    end = m_end_pos if m_end_pos is not None else len(text)
     return text[start:end]
 
 
@@ -1677,9 +1819,19 @@ def explicit_not_in_scope(section14_text: str) -> bool:
     # (5 sütunlu ADR/IMDG/IATA/ADN/RID tablosunda 80+ karakter ölçüldü) --
     # eski desen satır atlayamıyordu VE bu kadar uzun boşluğu kapsamıyordu.
     m = re.search(
-        r"(?:14\s*\.?\s*1\b\.?\s*)?UN[\s-]*(?:NUMARAS[ıi]|NO\.?|\([^)]*\)\s*number)"
+        # Etiket biçimleri: "UN NUMARASI", "UN No.", "UN (ADR/RID) number"
+        # ve -- yeni -- düz "UN number" / "UN nr". Son biçim eksik olduğu için
+        # "UN number: Non hazardous" satırları tanınmıyordu.
+        r"(?:14\s*\.?\s*1\b\.?\s*)?UN[\s-]*(?:NUMARAS[ıi]|NO\.?|NUMBER|NR\.?|\([^)]*\)\s*number)"
         r".{0,200}?"
-        r"\b(N\s*/\s*A|YOK|UYGULAN[AM]*Z|NONE|-)\b",
+        # Değer listesi, İngilizce şablonlarda sık geçen ifadelerle
+        # genişletildi. Ölçüm: 225 İngilizce kozmetik MSDS'inde UN no alanı
+        # "Not Applicable." veya "Non hazardous" yazıyordu; bunlar
+        # tanınmadığı için 19 ürün gereksiz yere "manuel kontrol" (belirsiz)
+        # olarak işaretleniyordu.
+        r"\b(N\s*/\s*A|YOK|UYGULAN[AM]*Z|NONE|-"
+        r"|NOT\s+APPLICABLE|NON[\s-]?HAZARDOUS|NOT\s+REGULATED"
+        r"|NOT\s+CLASSIFIED|NOT\s+RESTRICTED|NOT\s+SUBJECT)\b",
         section14_text, re.IGNORECASE | re.DOTALL)
     if m:
         return True
@@ -2176,7 +2328,7 @@ def extract_adr_info(pdf_path: str, ai_chain: list = None, ai_models: dict = Non
                 result["un_no"] = parsed["un_no"]
                 result["sinif"] = parsed["sinif"]
                 result["paketleme_grubu"] = parsed["paketleme_grubu"]
-                return result
+                return _eksik_alanlari_tamamla(result, sec14)
             else:
                 # parse_adr_first_line ilk satırı tanıyamadı — blok satırları
                 # "etiket\ndeğer" çiftleri şeklinde olabilir (BASF/Clariant tarzı).
@@ -2205,7 +2357,7 @@ def extract_adr_info(pdf_path: str, ai_chain: list = None, ai_models: dict = Non
                     result["un_no"] = _un.group(1)
                     result["sinif"] = _sinif.group(1) if _sinif else None
                     result["paketleme_grubu"] = _pg.group(1) if _pg else None
-                    return result
+                    return _eksik_alanlari_tamamla(result, sec14)
 
     # Yöntem 2: "14.1. UN NUMARASI" / "14.3. ... SINIFI" / "14.4. AMBALAJLAMA
     # GRUBU" gibi numaralı alt başlık + değer deseni (örn. AK-KİM şablonu).
@@ -2215,6 +2367,18 @@ def extract_adr_info(pdf_path: str, ai_chain: list = None, ai_models: dict = Non
         result["un_no"] = parsed2["un_no"]
         result["sinif"] = parsed2["sinif"]
         result["paketleme_grubu"] = parsed2["paketleme_grubu"]
+        return _eksik_alanlari_tamamla(result, sec14)
+
+    # Yöntem 3: Etiketli biçim -- "UN number : 1993", "ADR/RID Class :3",
+    # "Packing group: II" (özellikle İngilizce şablonlar). Bu yöntem, açık
+    # "kapsam dışı" kontrolünden ÖNCE çalışır: gerçek veri her zaman
+    # ifadeden önce gelir (bkz. aşağıdaki güvenlik notu).
+    parsed3 = _etiketli_tasima_bilgisi(sec14)
+    if parsed3:
+        result["adr_kapsaminda"] = True
+        result["un_no"] = parsed3["un_no"]
+        result["sinif"] = parsed3["sinif"]
+        result["paketleme_grubu"] = parsed3["paketleme_grubu"]
         return result
 
     # ÖNEMLİ (güvenlik sırası): Gerçek bir UN no bulunamadıysa, ŞİMDİ açık
