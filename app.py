@@ -325,6 +325,29 @@ with st.sidebar:
     )
     v2 = versiyon.startswith("Versiyon 2")
     v3 = versiyon.startswith("Versiyon 3")
+    v1 = not v2 and not v3
+
+    # ── V1 DETAY SÜTUNLARI (C-I) ────────────────────────────────────────
+    # V1 şablonunda C-I arası sütunlar (Cas_No, Tedarikçi, Fonksiyonu,
+    # Tehlikeli/Tehlikesiz, Tehlike Etiketi, H KODLARI, MSDS/SDS Tarihi)
+    # çoğu zaman gizli tutuluyor ve doldurulmasına gerek olmuyor. Bu alanlar
+    # ürün başına 1-2 AI çağrısı gerektirdiği için işlemin süresini asıl
+    # belirleyen kısım onlar. Kutu İŞARETLENMEZSE bu alanlar hiç çıkarılmaz
+    # ve AI'ya hiç istek gidilmez.
+    detay_alanlar = True
+    if v1:
+        detay_alanlar = st.checkbox(
+            "C–I sütunlarını da doldur (CAS No, Tedarikçi, Fonksiyon, "
+            "Tehlikeli/Tehlikesiz, Tehlike Etiketi, H Kodları, MSDS Tarihi)",
+            value=False,
+            key="v1_detay_alanlar",
+            help="Kapalıyken bu sütunlar boş bırakılır ve bu alanlar için "
+                 "AI'ya hiç istek gönderilmez — işlem belirgin biçimde "
+                 "hızlanır. Sadece UN No / Sınıf / Paketleme Grubu gibi "
+                 "ADR sütunları doldurulur.",
+        )
+        if not detay_alanlar:
+            st.caption("⚡ Hızlı mod: C–I sütunları atlanıyor.")
 
     st.header("1) Envanter Dosyası")
 
@@ -756,7 +779,8 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
                 pdf_path = save_upload(pdf, subdir="pdf")
                 try:
                     info = extract_adr_info(pdf_path, ai_chain=ai_chain, ai_models=ai_models,
-                                             ai_keys=ai_keys, ai_ollama_url=ai_ollama_url)
+                                             ai_keys=ai_keys, ai_ollama_url=ai_ollama_url,
+                                             detay_alanlar=detay_alanlar)
                 except Exception as e:
                     # Bozuk/okunamayan bir PDF tüm toplu işlemi durdurmasın --
                     # bu ürün "manuel kontrol gerekli" olarak işaretlenir,

@@ -1476,7 +1476,8 @@ def extract_tehlikeli_tehlikesiz(text: str, h_kodlari):
 
 
 def extract_full_info(pdf_path: str, text: str = None, ai_chain: list = None,
-                       ai_models: dict = None, ai_keys: dict = None, ai_ollama_url: str = ""):
+                       ai_models: dict = None, ai_keys: dict = None, ai_ollama_url: str = "",
+                       detay_alanlar: bool = True):
     """Bölüm 14 dışında, envanterin diğer sütunları için de Bölüm 1/2/3'ten
     bilgi çıkarır. extract_adr_info ile aynı metni tekrar okumamak için
     text önceden çıkarılmışsa parametre olarak verilebilir.
@@ -1484,9 +1485,29 @@ def extract_full_info(pdf_path: str, text: str = None, ai_chain: list = None,
     ai_chain verilmezse (None/boş liste) davranış TAMAMEN eskisiyle aynıdır —
     sadece regex çalışır. ai_chain doluysa (kullanıcı en az bir API anahtarı
     girdiyse), regex'in BOŞ bıraktığı alanlar için AI tamamlayıcı katman
-    devreye girer; regex'in doldurduğu hiçbir alana dokunulmaz."""
+    devreye girer; regex'in doldurduğu hiçbir alana dokunulmaz.
+
+    detay_alanlar=False ise, Excel'de C-I sütunlarına karşılık gelen DETAY
+    alanları (CAS No, Tedarikçi, Fonksiyon, Tehlikeli/Tehlikesiz, Tehlike
+    Etiketi, H Kodları, MSDS/SDS Tarihi) HİÇ çıkarılmaz ve bu alanlar için
+    AI'ya HİÇ istek gönderilmez. Bu sütunlar gizliyken/gerekmezken ürün
+    başına 1-2 AI çağrısı ve ağ beklemesi tamamen ortadan kalkar.
+    Varsayılan True -- mevcut çağrıların davranışı değişmez."""
     if text is None:
         text = pdf_to_text(pdf_path)
+
+    if not detay_alanlar:
+        # DETAY SÜTUNLARI KAPALI: hiçbir detay çıkarımı ve AI çağrısı yapılmaz.
+        # Alanlar, sonraki adımların (Excel yazımı, V3 satırı) None kontrolüyle
+        # sorunsuz çalışması için anahtar olarak yine döndürülür.
+        return {
+            "tedarikci": None, "fonksiyon": None, "fonksiyon_ham": None,
+            "cas_no": None, "h_kodlari": None, "tehlikeli_tehlikesiz": None,
+            "tehlike_etiketi": None, "revize_tarihi": None,
+            "uretici": None, "urun_kodu": None, "kimyasalin_turu": None,
+            "msds_dili": None, "cas_listesi": [],
+        }
+
     h_kodlari = extract_h_kodlari(text)
     sonuc = {
         "tedarikci": extract_tedarikci(text),
@@ -2272,7 +2293,8 @@ def parse_numbered_subsections(sec14_text: str):
 
 
 def extract_adr_info(pdf_path: str, ai_chain: list = None, ai_models: dict = None,
-                      ai_keys: dict = None, ai_ollama_url: str = ""):
+                      ai_keys: dict = None, ai_ollama_url: str = "",
+                      detay_alanlar: bool = True):
     """Tek bir PDF'ten ADR (Bölüm 14) bilgisini VE Versiyon 2'nin diğer
     sütunları (tedarikçi, fonksiyon, cas no, H kodları vb.) için Bölüm
     1/2/3'ten ek bilgiyi tek seferde çıkarır.
@@ -2283,7 +2305,9 @@ def extract_adr_info(pdf_path: str, ai_chain: list = None, ai_models: dict = Non
     için AI tamamlayıcı katman devreye girer — bkz. extract_full_info."""
     text = pdf_to_text(pdf_path)
     result = {
-        "revize_tarihi": extract_revize_tarihi(text),
+        # MSDS/SDS tarihi de C-I detay sütunlarından biridir; detay kapalıyken
+        # hesaplanmaz (bkz. detay_alanlar).
+        "revize_tarihi": extract_revize_tarihi(text) if detay_alanlar else None,
         "onerilen_ad": extract_suggested_name(text),
         "un_no": None,
         "sinif": None,
@@ -2293,7 +2317,8 @@ def extract_adr_info(pdf_path: str, ai_chain: list = None, ai_models: dict = Non
     }
     result.update(extract_full_info(pdf_path, text=text, ai_chain=ai_chain,
                                      ai_models=ai_models, ai_keys=ai_keys,
-                                     ai_ollama_url=ai_ollama_url))
+                                     ai_ollama_url=ai_ollama_url,
+                                     detay_alanlar=detay_alanlar))
 
     sec14 = find_section14_text(text)
     if sec14 is None:
