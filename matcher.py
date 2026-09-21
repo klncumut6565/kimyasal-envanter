@@ -153,6 +153,72 @@ def match_tablo_a(
     return None
 
 
+def _alt_bolum(sinif_metni) -> str:
+    """'2.1' -> '2.1', '2' -> '', '  2.3 ' -> '2.3'. Sınıf 2 için MSDS'lerde
+    yazılan ALT BÖLÜM (division) değerini döndürür."""
+    s = str(sinif_metni or "").strip()
+    m = re.match(r"^(\d)\.(\d)$", s)
+    return f"{m.group(1)}.{m.group(2)}" if m else ""
+
+
+def _satir_etiket_bolumu(row) -> str:
+    """Tablo A satırının 'Etiketler' hücresindeki İLK etiket kodunu döndürür.
+    Örn. '2.1\n+8' -> '2.1', '2.2\n' -> '2.2'."""
+    ham = str(row.get("etiketler") or "").strip()
+    m = re.match(r"\s*(\d(?:\.\d)?)", ham)
+    return m.group(1) if m else ""
+
+
+def alt_bolume_gore_sec(rows, un_no: str, sinif_metni: str):
+    """Aynı UN numarasına ait birden çok Tablo A satırı varsa, MSDS'te yazan
+    ALT BÖLÜM ile 'Etiketler' sütununu karşılaştırarak doğru satırı seçer.
+
+    NEDEN GEREKLİ: Tablo A'nın 'Sınıf' sütunu Sınıf 2 için her zaman '2'
+    yazar; alevlenebilir/asfiksant/zehirli ayrımı yalnızca 'Etiketler'
+    sütununda (2.1 / 2.2 / 2.3) görünür. Örn. UN 1950 (AEROSOLLER) Tablo
+    A'da 12 satırdır ve İLK satır 'asfiksant' (2.2)'dir. MSDS 'ADR/RID
+    Class: 2.1' (alevlenebilir) dese bile, sınıf '2.1' != '2' olduğu için
+    eşleşme kurulamıyor ve ilk satıra düşülüyordu -- ürün ALEVLENEBİLİR
+    olmasına rağmen ASFİKSANT etiketiyle işaretleniyordu.
+
+    Birden fazla satır aynı alt bölümü taşıyorsa (örn. 2.1 ve 2.1+8), EK
+    etiketi OLMAYAN en yalın satır seçilir; ek tehlike (aşındırıcı, zehirli)
+    MSDS'te ayrıca belirtilmediği sürece varsayılamaz.
+    """
+    bolum = _alt_bolum(sinif_metni)
+    if not bolum:
+        return None
+    adaylar = [r for r in rows
+               if r["un_no"] == str(un_no).strip()
+               and _satir_etiket_bolumu(r) == bolum]
+    if not adaylar:
+        return None
+    # En az ek etiketi olan (en yalın) satır
+    adaylar.sort(key=lambda r: str(r.get("etiketler") or "").count("+"))
+    return adaylar[0]
+
+
+def alt_bolum_belirsiz_mi(rows, un_no: str, sinif_metni: str) -> bool:
+    """MSDS ALT BÖLÜM vermemişken (örn. sadece 'Sınıf 2'), o UN numarası
+    Tablo A'da BİRDEN ÇOK etiket bölümü (2.1 / 2.2 / 2.3) içeriyorsa True
+    döner.
+
+    GÜVENLİK GEREKÇESİ: Bu durumda hangi varyantın doğru olduğu belgeden
+    anlaşılamaz. Sessizce ilk satır seçilirse, ALEVLENEBİLİR bir aerosol
+    (2.1) ASFİKSANT (2.2) olarak etiketlenebilir -- tehlike olduğundan
+    daha düşük gösterilmiş olur. Bu yüzden karar verilmez, ürün manuel
+    kontrole düşürülür.
+    """
+    if _alt_bolum(sinif_metni):
+        return False           # alt bölüm zaten verilmiş, belirsizlik yok
+    bolumler = {
+        _satir_etiket_bolumu(r)
+        for r in rows if r["un_no"] == str(un_no).strip()
+    }
+    bolumler.discard("")
+    return len(bolumler) > 1
+
+
 def get_official_sinif_for_un(tablo_a_path: str, un_no: str):
     """Sadece UN numarasına bakarak (sınıf/paketleme grubundan bağımsız)
     Tablo A'daki RESMİ sınıfı döndürür. PDF'i hazırlayanların sınıfı
@@ -259,6 +325,33 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
         adr_info["paketleme_grubu"],
     )
 
+    # GÜVENLİK KAPISI: MSDS alt bölüm vermemiş ve bu UN Tablo A'da birden
+    # çok etiket bölümü içeriyorsa (örn. UN 1950 -> 2.1 / 2.2), hangi
+    # varyantın doğru olduğu belgeden anlaşılamaz. Sessizce ilk satırı
+    # seçmek tehlikeyi olduğundan düşük gösterebilir; ürün manuel kontrole
+    # düşürülür.
+    if alt_bolum_belirsiz_mi(load_tablo_a(tablo_a_path), un_no, sinif):
+        row.update({
+            "UN NUMARASI": un_no,
+            "SINIFI / ETİKETİ": MANUAL_REVIEW_TEXT,
+            "PAKETLEME GRUBU": MANUAL_REVIEW_TEXT,
+            "UYGUN SEVKİYAT ADI": MANUAL_REVIEW_TEXT,
+            "SINIRLI MİKTAR": MANUAL_REVIEW_TEXT,
+            "İSTİSNAİ MİKTAR": MANUAL_REVIEW_TEXT,
+            "ÖZEL HÜKÜMLER": MANUAL_REVIEW_TEXT,
+            "TANK KODU": MANUAL_REVIEW_TEXT,
+            "AMBALAJLAMA TALİMATLARI": MANUAL_REVIEW_TEXT,
+            "TAŞIMA KATEGORİSİ/(TÜNEL KODU)": MANUAL_REVIEW_TEXT,
+            "ADR İŞARETİ": MANUAL_REVIEW_TEXT,
+        })
+        row["durum"] = "manual_review"
+        row["_manuel_neden"] = (
+            f"UN {un_no} için ADR Tablo A'da birden çok tehlike bölümü var "
+            f"(ör. 2.1 alevlenebilir / 2.2 asfiksant) ancak MSDS'te alt bölüm "
+            f"belirtilmemiş. Doğru varyant elle seçilmelidir."
+        )
+        return row
+
     match = match_tablo_a(
         tablo_a_path,
         un_no,
@@ -288,7 +381,18 @@ def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
             or str(sinif).strip().lower() == "none"
             or sinif_is_subsection
         )
-        if official_sinif and (sinif_bos or official_sinif != str(sinif).strip()):
+        # ÖNCE alt bölüm eşleştirmesi: MSDS '2.1' gibi bir ALT BÖLÜM
+        # veriyorsa, bu Tablo A'nın 'Sınıf' sütunuyla (her zaman '2')
+        # eşleşmez ama 'Etiketler' sütunuyla eşleşir. Bu denenmeden
+        # official_sinif'e düşülürse aynı UN'in İLK satırı seçilir ve
+        # yanlış etiket basılır (bkz. alt_bolume_gore_sec).
+        if match is None and not sinif_bos:
+            _bolum_match = alt_bolume_gore_sec(
+                load_tablo_a(tablo_a_path), un_no, sinif)
+            if _bolum_match:
+                match = _bolum_match
+
+        if match is None and official_sinif and (sinif_bos or official_sinif != str(sinif).strip()):
             duzeltilmis_match = match_tablo_a(
                 tablo_a_path,
                 un_no,
