@@ -241,14 +241,29 @@ def _fonksiyon_ozel(kimyasal_adi):
 
 
 def build_inventory_row(adr_info: dict, tablo_a_path: str, kimyasal_adi: str,
-                         ambalaj_tank_dokme: str = "AMBALAJLI"):
-    """extractor.extract_adr_info() çıktısından envanter satırı sözlüğü üretir."""
+                         ambalaj_tank_dokme: str = "AMBALAJLI", atik_kodu: str = None, atik_kodu_tanimi: str = None):
+    """extractor.extract_adr_info() çıktısından envanter satırı sözlüğü üretir.
+    
+    Yeni parametre:
+    - atik_kodu: Atık kodu (ör. "10 01 22*") — Kimyasal Adı başına eklenecek
+    - atik_kodu_tanimi: Atık kodu tanımı (ör. "Kazan temizlemesi...") — Kimyasal Adı'ya eklenecek
+    """
     # Multi-CAS öncelikli; yoksa tek CAS'e düş; hiçbiri yoksa "-" yaz.
     # Birden fazla CAS No varsa aynı hücrede alt alta (satır sonu ile
     # ayrılmış) gösterilir.
     cas_deger = _cas_listesi_hucre_formati(adr_info.get("cas_listesi")) or adr_info.get("cas_no") or "-"
+    
+    # Kimyasal Adı: Atık kodu ve tanımı ekle
+    kimyasal_adi_final = kimyasal_adi
+    if atik_kodu and atik_kodu_tanimi:
+        # Format: "10 01 22*-Kazan temizlemesi..."
+        kimyasal_adi_final = f"{atik_kodu}-{atik_kodu_tanimi}"
+    elif atik_kodu:
+        # Sadece kodu ekle
+        kimyasal_adi_final = f"{atik_kodu}-{kimyasal_adi}"
+    
     row = {
-        "Kimyasal Adı": kimyasal_adi,
+        "Kimyasal Adı": kimyasal_adi_final,
         "AMBALAJLI/TANK/DÖKME": ambalaj_tank_dokme,
         "MSDS/SDS TARİHİ": adr_info.get("revize_tarihi"),
         "ADR-IMDG-IATA": "ADR",  # Bu sütun her zaman sabit "ADR" yazar (durum ne olursa olsun)
