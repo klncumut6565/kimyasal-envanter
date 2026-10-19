@@ -286,6 +286,7 @@ def _extract_revize_tarihi(text: str):
         r"Yay[ıi]nlanma\s*[Tt]arihi\s*:?\s*" + tarih_degeri,  # "Yayınlanma Tarihi:08.03.2019" (FOURKIM şablonu)
         r"G[öo]zden\s+geçirme\s+[Tt]arihi\s*:?\s*" + tarih_degeri,  # "Gözden geçirme tarihi: 27.11.2020" (Mavagen)
         r"\bRevision\s*:?\s*" + tarih_degeri,  # İngilizce MSDS
+        r"\brevize\s*:\s*" + tarih_degeri,  # Gülçiçek altlığı: "üzerinde revize: 15 temmuz 2024"
         r"\bRevision\s+Date\s*:?\s*" + tarih_degeri,  # "Revision Date: 12.12.2020" sütun formatı
         r"Reviewed\s+on\s*:?\s*" + tarih_degeri,  # "Reviewed on: 05.04.2017" İngilizce şablon
         r"Rev\d*\.?\s*\(\s*" + tarih_degeri + r"\s*\)",  # "Rev.1 (26.05.2016)" / "Rev1. (26.05.2016)" (Lefasol/SDS kod şablonu)
@@ -459,6 +460,11 @@ _TEDARIKCI_GECERSIZ = [
     # "1.1 ürün adı" / "1.3 tedarikçinin bilgileri" gibi BAŞLIK satırları
     r"^\d+(?:\.\d+)*\.?\s*(?:[üu]r[üu]n|madde|kar[ıi][şs][ıi]m|tedarik|"
     r"[şs]irket|firma|g[üu]venlik)\b",
+    # İngilizce başlık artığı: "1.3 Details of the supplier of the safety
+    # data sheet" satırında "supplier" etiket sanılıyor, kalan "of the
+    # safety data sheet" firma adı olarak yazılıyordu (Flora/Ashland).
+    r"^(?:of|the|and|for)\b",
+    r"safety\s+data\s+sheet|g[üu]venlik\s+bilgi\s+formu",
 ]
 
 
@@ -528,6 +534,21 @@ def _tedarikci_temizle(val: str):
                 val = yeni
                 break
     val = re.sub(r"\s{2,}", " ", val).strip(" :;|-–•·").strip()
+    # "Manufacturer FLORA UÇAN YAĞLAR SAN. VE TİC. LTD. ŞTİ. İkitelli OSB. ...
+    # T +90 212 ... info@..." -- etiket TEK boşlukla yapışık ve unvan,
+    # adres/telefon/e-posta ile aynı satırda (Flora şablonu). Tek kelimelik
+    # İngilizce etiket atılır; değer son "LTD. ŞTİ./A.Ş./GmbH" sonekinden
+    # sonra adres/iletişim bilgisiyle devam ediyorsa sonekte kesilir.
+    val = re.sub(r"^(?:Manufacturer|Supplier|Producer|Distributor|Company)\s+(?=[A-ZÇĞİÖŞÜ])",
+                 "", val)
+    for m_sonek in re.finditer(
+            r"(?:LTD\.?\s*[ŞS]T[İI]\.?|A\.\s?[ŞS]\.?|GmbH|Inc\.|Corp\.|S\.A\.|B\.V\.)",
+            val):
+        kalan = val[m_sonek.end():]
+        if len(kalan) > 15 and re.search(
+                r"(?i)@|\+\d|\b(?:tel|osb|g\.?o\.?s\.?b|mah|cad|sok|no\s*:|pk)\b", kalan):
+            val = val[:m_sonek.end()].strip()
+            break
     return _tekrari_sil(val)         # collapse SONRASI da dene
 
 
@@ -1163,19 +1184,29 @@ def extract_cas_no(text: str):
             continue
         m = re.search(r"CAS\s*[-_.]?\s*[Nn]umaras[ıi]\s*:?\s*(\d{2,7}-\d{2}-\d)", aralik)
         if m:
-            return m.group(1)
+            return _cas_normalize(m.group(1))
         # "CAS No   2309-94-6" sütun formatı (MGVB şablonu — büyük boşluklu)
         m = re.search(r"CAS[\s.-]*[Nn]o\.?\s*(\d{2,7}-\d{2}-\d)", aralik)
         if m:
-            return m.group(1)
+            return _cas_normalize(m.group(1))
         m = re.search(r"\b(\d{2,7}-\d{2}-\d)\b", aralik)  # tablo düzeni için genel yedek
         if m:
-            return m.group(1)
+            return _cas_normalize(m.group(1))
         # Tiresiz CAS (örn. "32041630") — Bölüm 1 veya 3'te "CAS no/No." etiketi yanında
         m = re.search(r"CAS\s*[-_.]?\s*[Nn]o\.?\s*:?\s*(\d{6,10})\b", aralik)
         if m:
-            return m.group(1)
+            return _cas_normalize(m.group(1))
     return None
+
+
+def _cas_normalize(cas):
+    """"0000122-99-6" -> "122-99-6". Bazı şablonlar (Gülçiçek) CAS'ın ilk
+    bölümünü 7 haneye sıfırla dolduruyor; matcher/Excel standart biçimi
+    beklediği için baştaki sıfırlar atılır (en az 2 hane kalır)."""
+    if not cas or "-" not in cas:
+        return cas
+    ilk, kalan = cas.split("-", 1)
+    return ilk.lstrip("0").rjust(2, "0") + "-" + kalan
 
 
 def _cas_check_digit(cas: str) -> bool:
@@ -1205,6 +1236,7 @@ def extract_cas_listesi(text: str):
     seen = set()
 
     def _ekle(cas):
+        cas = _cas_normalize(cas)
         if cas and cas not in seen and _cas_check_digit(cas):
             seen.add(cas)
             bulunanlar.append(cas)
@@ -1606,15 +1638,109 @@ def _eksik_alanlari_tamamla(result: dict, sec14: str) -> dict:
     Zararlılık sınıfı: 3" belgesinde sınıf boş kalıyordu. Bu fonksiyon
     yalnızca BOŞ alanları doldurur; bulunmuş bir değeri asla ezmez.
     """
+    # Küçük harfli "i" bir paketleme grubu DEĞİLDİR. IGNORECASE ile çalışan
+    # PG desenleri "sinif(lar)i:" içindeki ")i:" parçasını "I" sanabiliyordu
+    # (Gülçiçek şablonunda PG = "i" çıktı) -- bu tür değerler atılır.
+    if result.get("paketleme_grubu") not in (None, "I", "II", "III"):
+        result["paketleme_grubu"] = None
     if result.get("sinif") and result.get("paketleme_grubu"):
         return result
-    m_sinif = _SINIF_ADR.search(sec14) or _SINIF_GENEL.search(sec14)
-    m_pg = _PG_ETIKETLI.search(sec14)
-    if not result.get("sinif") and m_sinif:
-        result["sinif"] = m_sinif.group(1)
-    if not result.get("paketleme_grubu") and m_pg:
-        result["paketleme_grubu"] = m_pg.group(1).upper()
+    if not result.get("sinif"):
+        result["sinif"] = _sinif_bul(sec14, result.get("un_no"))
+    if not result.get("paketleme_grubu"):
+        result["paketleme_grubu"] = _pg_bul(sec14, result.get("un_no"))
     return result
+
+
+# Etiket ile değer arasına giren parantezli nitelikler: "class(es)",
+# "(ADR)", "(SEA)" ve markdown tablo ayracı "|". Flora Uçan Yağlar
+# şablonu "Transport hazard class(es) (ADR) : 3" / "Packing group (ADR) : II"
+# yazıyor; eski desenler etiketten hemen sonra ":" + değer beklediği için
+# (ADR) niteliğine takılıp sınıf ve PG'yi BOŞ bırakıyordu -- Tablo A
+# eşleşmesi de bu yüzden "UN 1993" için birden çok satır arasında
+# seçim yapamıyordu.
+_AYRAC = r"[\s|]*[.:]?[\s|]*"
+_SINIF_NITELIKLI_ADR = re.compile(
+    r"(?:hazard\s+class|class|s[ıi]n[ıi]f)(?:\s*\([^)\n]{0,10}\))?"
+    r"\s*\(\s*ADR[^)\n]{0,15}\)" + _AYRAC + r"(\d(?:\.\d)?)\b",
+    re.IGNORECASE)
+_SINIF_NITELIKLI = re.compile(
+    r"(?:transport\s+hazard\s+class|hazard\s+class|class)"
+    r"(?:\s*\([^)\n]{0,25}\))*" + _AYRAC + r"(\d(?:\.\d)?)\b",
+    re.IGNORECASE)
+_PG_NITELIKLI = re.compile(
+    r"(?:packing\s*group|ambalaj\w*\s*gr\w*)(?:\s*\([^)\n]{0,25}\))*"
+    + _AYRAC + r"((?-i:I{1,3}))\b",
+    re.IGNORECASE)
+
+
+def _alt_bolum_penceresi(sec14: str, no: int, uzunluk: int = 400):
+    """"14.<no>" alt başlığından başlayıp bir sonraki "14.x" başlığına
+    (veya uzunluk sınırına) kadar olan metni döndürür."""
+    m = re.search(rf"14\s*\.\s*{no}\b", sec14)
+    if not m:
+        return ""
+    pencere = sec14[m.end():m.end() + uzunluk]
+    m_son = re.search(r"14\s*\.\s*\d\b", pencere)
+    return pencere[:m_son.start()] if m_son else pencere
+
+
+def _gecerli_sinif_degeri(val) -> bool:
+    try:
+        return 1 <= int(str(val).split(".")[0]) <= 9
+    except (TypeError, ValueError):
+        return False
+
+
+def _tasima_belgesi_tanimi(sec14: str, un_no):
+    """"UN 1993 FLAMMABLE LIQUID, N.O.S. (...), 3, II, (D/E)" taşıma belgesi
+    tanımından (sınıf, PG) çiftini okur. Bu satır, sınıf/PG için hangi
+    etiket biçimi kullanılırsa kullanılsın ADR 5.4.1.1.1'e göre aynı
+    sırayla yazıldığı için en güvenilir yedektir."""
+    if not un_no:
+        return None, None
+    m = re.search(
+        rf"\bUN\s*{re.escape(str(un_no))}\b[^\n]*?,\s*(\d(?:\.\d)?)\s*"
+        r"(?:\(\s*\d(?:\.\d)?(?:\s*,\s*\d(?:\.\d)?)*\s*\)\s*)?,\s*"
+        r"(I{1,3})\s*(?:,|\(|$)",
+        sec14, re.MULTILINE)
+    if m and _gecerli_sinif_degeri(m.group(1)):
+        return m.group(1), m.group(2)
+    return None, None
+
+
+def _sinif_bul(sec14: str, un_no=None):
+    # 1) Eski desenler (davranış korunur)
+    m = _SINIF_ADR.search(sec14) or _SINIF_GENEL.search(sec14)
+    if m:
+        return m.group(1)
+    # 2) "(ADR)" nitelikli etiket öncelikli, sonra genel nitelikli etiket
+    for desen in (_SINIF_NITELIKLI_ADR, _SINIF_NITELIKLI):
+        m = desen.search(sec14)
+        if m and _gecerli_sinif_degeri(m.group(1)) and m.group(1) != str(un_no):
+            return m.group(1)
+    # 3) Ashland çok modlu satır: "14.3 Transport hazard class(es)\n
+    #    ADN: 3 ADR: 3 ... RID: 3" -- ADR değeri mod listesinin içinde.
+    m = re.search(r"\bADR\s*:\s*(\d(?:\.\d)?)\b",
+                  _alt_bolum_penceresi(sec14, 3))
+    if m and _gecerli_sinif_degeri(m.group(1)):
+        return m.group(1)
+    # 4) Taşıma belgesi tanımı
+    return _tasima_belgesi_tanimi(sec14, un_no)[0]
+
+
+def _pg_bul(sec14: str, un_no=None):
+    m = _PG_ETIKETLI.search(sec14)
+    if m and m.group(1).upper() == m.group(1):
+        return m.group(1)
+    m = _PG_NITELIKLI.search(sec14)
+    if m:
+        return m.group(1)
+    # Ashland: "14.4 Packing group\nADN: II ADR: II ..."
+    m = re.search(r"\bADR\s*:\s*(I{1,3})\b", _alt_bolum_penceresi(sec14, 4))
+    if m:
+        return m.group(1)
+    return _tasima_belgesi_tanimi(sec14, un_no)[1]
 
 
 def _etiketli_tasima_bilgisi(sec14: str):
@@ -1642,12 +1768,10 @@ def _etiketli_tasima_bilgisi(sec14: str):
     if not un_no:
         return None
 
-    m_sinif = _SINIF_ADR.search(sec14) or _SINIF_GENEL.search(sec14)
-    m_pg = _PG_ETIKETLI.search(sec14)
     return {
         "un_no": un_no,
-        "sinif": m_sinif.group(1) if m_sinif else None,
-        "paketleme_grubu": m_pg.group(1).upper() if m_pg else None,
+        "sinif": _sinif_bul(sec14, un_no),
+        "paketleme_grubu": _pg_bul(sec14, un_no),
     }
 
 
@@ -1795,7 +1919,20 @@ def kesin_kapsam_disi(sec14_text: str) -> bool:
         r"\s*:?\s*(?:Uygulanamaz|Uygulanmaz|Ge[çc]erli\s+de[ğg]il|"
         r"[İIıi]lgili\s+de[ğg]il|Yok|Not\s+applicable|N\s*/\s*A)\b",
     ]
-    return any(re.search(p, t) for p in desenler)
+    if any(re.search(p, t) for p in desenler):
+        return True
+    # "14.1 UN numarası: Düzenlenmemiş" / "UN number: Not regulated" --
+    # Gülçiçek şablonu (font ş/ı harflerini düşürdüğü için metinde
+    # "Düzenlenmemis", "numarasi" olarak geliyor). Bu değer, karayolu/
+    # deniz/hava için ayrı ayrı yazılabildiğinden ve bir modda düzenlenmemiş
+    # olup diğerinde UN no taşıyan nadir belgeler olabileceğinden, yalnızca
+    # Bölüm 14'te HİÇBİR "UN ####" belirteci yokken kesin kapsam dışı sayılır.
+    duzenlenmemis = re.search(
+        r"(?i)[ÜU]N[\s-]*(?:numaras[ıi]|number|no\.?)[^\n]{0,20}?[\s:|]*"
+        r"(?:D[üu]zenlenmemi[şs]|Not\s+regulated|Not\s+dangerous\s+goods)\b", t)
+    if duzenlenmemis and not re.search(r"(?i)\bUN\s*-?\s*\d{4}\b", t):
+        return True
+    return False
 
 
 def explicit_not_in_scope(section14_text: str) -> bool:
@@ -1903,7 +2040,30 @@ def _sec14_normalize(sec14_text: str) -> str:
                    lambda m: " " * len(m.group(0)), metin)
     metin = re.sub(r"\b\d{1,2}\.\d{3,}\b",
                    lambda m: " " * len(m.group(0)), metin)
+    # AY ADIYLA YAZILMIŞ tarihler de maskelenir. Gerçek vaka: Gülçiçek
+    # (STRAWBERRY SCRUB MOD) sayfa altlığı "revize: 15 temmuz 2024 ...
+    # Çikti alma tarihi : 15-OCT-2024" Bölüm 14'e sızıyor; 14.1 değeri
+    # "Düzenlenmemiş" (sayı yok) olduğu için 14.1 deseni 150 karakter
+    # içindeki ilk sayıyı -- 2024'ü -- UN no sandı. ADR'ye tabi olmayan
+    # parfüm hammaddesi envantere UN 2024 (cıva bileşiği, Sınıf 6.1)
+    # olarak yazılıyordu. ISO tarih (2024-03-04) de aynı riski taşır.
+    metin = re.sub(r"(?i)\b\d{1,2}[\s\-./]+" + _AY_ADI + r"[\s\-./,]+\d{4}\b",
+                   lambda m: " " * len(m.group(0)), metin)
+    metin = re.sub(r"(?i)\b" + _AY_ADI + r"[\s\-./]+\d{1,2},?[\s\-./]+\d{4}\b",
+                   lambda m: " " * len(m.group(0)), metin)
+    metin = re.sub(r"\b\d{4}-\d{1,2}-\d{1,2}\b",
+                   lambda m: " " * len(m.group(0)), metin)
     return metin
+
+
+# Türkçe/İngilizce ay adları ve kısaltmaları (tarih maskelemede kullanılır).
+# Font bozulmasıyla Türkçe harfi düşmüş biçimler de (subat, agustos ...) dahil.
+_AY_ADI = (
+    r"(?:ocak|[şs]ubat|mart|nisan|may[ıi]s|haziran|temmuz|a[ğg]ustos|"
+    r"eyl[üu]l|ekim|kas[ıi]m|aral[ıi]k|"
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|"
+    r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?"
+)
 
 
 def find_adr_block(section14_text: str):
