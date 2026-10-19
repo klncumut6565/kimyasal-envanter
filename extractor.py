@@ -261,7 +261,38 @@ def normalize_tarih(deger):
 def extract_revize_tarihi(text: str):
     """Bölüm 1/16'dan revizyon tarihini çıkarır ve GG.AA.YYYY biçimine
     normalize eder (bkz. normalize_tarih)."""
-    return normalize_tarih(_extract_revize_tarihi(text))
+    deger = _extract_revize_tarihi(text)
+    if not deger:
+        deger = _issue_date_referansli(text)
+    return normalize_tarih(deger)
+
+
+def _issue_date_referansli(text: str):
+    """"Issue date: 7/17/2024" (Flora Uçan Yağlar şablonu) -- bu şablon
+    tarihi ABD biçiminde (AA/GG/YYYY) yazıyor; normalize_tarih ise Türkçe
+    varsayımla GG/AA okuyup "5/12/2023"ü 05.12.2023 yapardı (doğrusu
+    12.05.2023). Aynı belgedeki "SDS TR reference: 120523-1" kodu
+    GGAAYY biçiminde olduğundan gün/ay sırası bu kodla DOĞRULANIR.
+    Referans yoksa yalnızca bileşenlerden biri 12'yi aşıyorsa (tek
+    anlamlı) tarih verilir; belirsizse None döner -- yanlış tarih
+    yazmaktansa boş bırakmak daha güvenli."""
+    m = re.search(r"Issue\s+date\s*:?\s*(\d{1,2})/(\d{1,2})/(\d{4})", text, re.IGNORECASE)
+    if not m:
+        return None
+    a, b, yil = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    adaylar = {(b, a), (a, b)}            # (gün, ay): AA/GG ve GG/AA okumaları
+    ref = re.search(r"SDS\s+TR\s+reference\s*:\s*(\d{5,6})-", text, re.IGNORECASE)
+    if ref:
+        r = ref.group(1).zfill(6)
+        ref_gun, ref_ay, ref_yil = int(r[:2]), int(r[2:4]), int(r[4:])
+        if (ref_gun, ref_ay) in adaylar and yil % 100 == ref_yil:
+            return f"{ref_gun:02d}.{ref_ay:02d}.{yil:04d}"
+        return None
+    gecerli = [(g, ay) for g, ay in adaylar if 1 <= ay <= 12 and 1 <= g <= 31]
+    if len(gecerli) == 1:
+        g, ay = gecerli[0]
+        return f"{g:02d}.{ay:02d}.{yil:04d}"
+    return None
 
 
 def _extract_revize_tarihi(text: str):
@@ -962,6 +993,15 @@ _EN_TR_SOZLUK = {
     "professional use": "profesyonel kullanım",
     "scientific research and development": "bilimsel araştırma ve geliştirme",
     "research and development": "araştırma ve geliştirme",
+    # Flora Uçan Yağlar parfüm/esans şablonu: "Use of the substance/mixture : Odour agents"
+    "odour agents": "koku verici (esans)",
+    "odour agent": "koku verici (esans)",
+    "odor agents": "koku verici (esans)",
+    "perfumes, fragrances": "parfüm / esans",
+    "perfumes, fragrances,odour agents": "parfüm / esans",
+    "fragrance": "esans",
+    "fragrances": "esans",
+    "personal care": "kişisel bakım ürünü",
 }
 
 # Metnin İngilizce olduğunu ele veren yaygın işlev kelimeleri.
@@ -1111,6 +1151,10 @@ def _extract_fonksiyon(text: str, kisalt: bool = True):
         r"Tavsiye\s+edilen\s+kullan[ıi]m\s+alan[ıi]\s*:\s*([^\n]{3,150})",
         r"(?m)^\s*Kullanim\s*:\s*\n?\s*([^\n]{3,80})",
         r"Relevant\s+identified\s+uses\s*:\s*([^\n]{3,120})",  # İngilizce MSDS (satır başında olmayabilir)
+        # "Use of the substance/mixture : Odour agents" (Flora şablonu; pipe
+        # tablo hücresinde de gelebilir). Değer sözlükle Türkçeleştirilir.
+        r"Use\s+of\s+the\s+substance\s*/\s*mixture[\s|]*:?[\s|]*([^\n|]{3,120})",
+        r"Recommended\s+use[\s|]*:[\s|]*([^\n|]{3,120})",  # Ashland: "Recommended use : Personal care"
         # "...belirlenmiş kullanımları ve tavsiye edilmeyen kullanımları
         # Madde/Karışımın kullanımı : Tekstil ..." -- başlık ve değer AYNI
         # satırda (CHT şablonu). Bu deseni, aşağıdaki genel/greedy son
@@ -1168,6 +1212,13 @@ def _extract_fonksiyon(text: str, kisalt: bool = True):
                 continue
             if re.search(_ingilizce_anahtar, val, re.IGNORECASE):
                 continue  # İngilizce metin -- sıradaki desene geç
+            # Sözlükte TAM karşılığı olan İngilizce terimler ağ isteği
+            # olmadan Türkçeleştirilir ("Odour agents" -> "koku verici
+            # (esans)"); karşılığı yoksa değer olduğu gibi döner ve AI
+            # yapılandırılmışsa extract_full_info onu çevirir.
+            _tam = re.sub(r"\s+", " ", val).strip().strip(".").lower()
+            if _tam in _EN_TR_SOZLUK:
+                return _EN_TR_SOZLUK[_tam]
             return val
     return None
 
@@ -1471,7 +1522,8 @@ def extract_uyari_kelimesi(text: str):
     if m:
         return m.group(1).strip()
     # İngilizce MSDS: "Signal Word: Attention/Warning/Danger" → Türkçe karşılığa çevir
-    m = re.search(r"Signal\s+Word\s*:?\s*\n?\s*(Attention|Warning|Danger)\b", bolum2, re.IGNORECASE)
+    m = re.search(r"Signal\s+Word(?:\s*\([^)\n]{0,15}\))?[\s|]*:?[\s|]*\n?\s*(Attention|Warning|Danger)\b",
+                  bolum2, re.IGNORECASE)
     if m:
         return {"attention": "Dikkat", "warning": "Dikkat", "danger": "Tehlike"}.get(m.group(1).lower(), m.group(1))
     return None
