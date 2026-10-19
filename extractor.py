@@ -365,6 +365,7 @@ def _urun_adi_kirp(name: str) -> str:
         r"\bBÖLÜM\s+2\b", r"Tavsiye\s+edilen", r"Tavsiye\s+edilmeyen",
         r"Tan[ıi]m[ıi]n\s+başka", r"\bEşanlamlı",
         r"\bChemical\s+Structure\b", r"\bCAS\s*#",
+        r"\bTrademark\b",  # Ashland: "Advantage™ LC-E polymer ™ Trademark, Ashland or its..."
     ]
     en_erken = len(name)
     for isaretci in isaretciler:
@@ -373,6 +374,30 @@ def _urun_adi_kirp(name: str) -> str:
             en_erken = m.start()
     name = name[:en_erken].strip(" -:")
     return name[:80].strip()
+
+
+# Ürün adı DEĞİL, cümle olduğunu ele veren kelimeler. Gerçek vaka
+# (Gülçiçek şablonu): Bölüm 13 "13.1. Atık işleme yöntemleri Ürün:
+# bölümlerinde 6, 7 ve yerel veya ulusal yönetmeliklere göre 8. Dispose
+# altında verilen talimatlara göre..." cümlesindeki "Ürün:" etiketi,
+# BASF başlık deseni ("Ürün: Hydrosulfite F") tarafından ürün adı
+# sanılıyor ve Kimyasal Adı sütununa bu cümle yazılıyordu. Türkçe
+# MSDS'lerde Bölüm 13'te "Ürün:" / "Ambalaj:" alt başlığı çok yaygın.
+_URUN_ADI_CUMLE_ISARETI = re.compile(
+    r"(?i)\b(?:b[öo]l[üu]m\w*|g[öo]re|y[öo]netmeli\w*|talimat\w*|bertaraf\w*|"
+    r"at[ıi]k\w*|kanalizasyon\w*|edilmeli\w*|uygun\w*|verilen|"
+    r"section\w*|accordance|dispos\w*|regulation\w*|must|should)\b")
+
+
+def _urun_adi_gecersiz(name: str) -> bool:
+    if not name or len(name) < 2:
+        return True
+    if _URUN_ADI_CUMLE_ISARETI.search(name):
+        return True
+    # "6, 7 ve ... 8." gibi bölüm numarası listeleri
+    if re.search(r"\b\d{1,2}\s*,\s*\d{1,2}\b.*\bve\b", name):
+        return True
+    return False
 
 
 def extract_suggested_name(text: str):
@@ -386,6 +411,8 @@ def extract_suggested_name(text: str):
     # hem temel hem çekimli hâlleri kapsar.
     patterns = [
         r"Ürün\s+is(?:im\b|mi\w*)\s*:?\s*(.+)",
+        # Gülçiçek: "1.1. Madde/Karisim kimligi 4127342 KG/ STRAWBERRY SCRUB MOD ©MG ürünü"
+        r"Madde\s*/\s*Kar[ıi][şs][ıi]m\s+kimli[ğg]i[ \t]*:?[ \t]*([^\n©]{2,90}?)\s*(?:©|\s{2,}|\n|$)",
         r"Ticari\s+is(?:im\b|mi\w*)\s*:?\s*(.+)",
         r"Ticari ad[ıi]\s*:?\s*(.+)",
         r"Ürün ad[ıi]\s*:?\s*(.+)",
@@ -411,10 +438,11 @@ def extract_suggested_name(text: str):
         # şablonlarda ürün adı "Ürün"/"Ticari" değil "Malzeme" etiketiyle
         # geçiyor (Soda şablonu)
         r"\|\s*(?:\d\.\d\s*)?Malzeme\s*\|\s*\|?\s*([^\n|]{2,80})\s*\|",
+        # Sayfa altlığı: "Ürün : 4127342 - KG/ STRAWBERRY SCRUB MOD Sayfa 1 / 13" (Gülçiçek)
+        r"Ürün\s*:\s*([^\n]{2,80}?)\s+Sayfa\s+\d+\s*/\s*\d+",
     ]
     for p in patterns:
-        m = re.search(p, text, re.IGNORECASE)
-        if m:
+        for m in re.finditer(p, text, re.IGNORECASE):
             name = m.group(1).strip()
             name = re.sub(r"™|®", "", name).strip()
             name = _pipe_ilk_hucre(name)
@@ -424,7 +452,7 @@ def extract_suggested_name(text: str):
             # ("Microcare IT ꞏ").
             if name:
                 name = re.split(r"\s*[ꞏ•]\s*", name)[0].strip(" -·")
-            if name:
+            if name and not _urun_adi_gecersiz(name):
                 return name
     return None
 
