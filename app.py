@@ -10,6 +10,21 @@ from st_keyup import st_keyup
 from openpyxl import load_workbook
 
 from extractor import extract_adr_info, clean_product_name
+import extractor as _extractor_modulu
+import hashlib
+
+# Çıkarım kodunun parmak izi. Oturumda (st.session_state.urunler) saklanan
+# PDF sonuçları, çıkarım kodu GÜNCELLENDİĞİNDE geçersiz sayılır ve PDF'ler
+# yeniden okunur. Önceden aynı dosya adı oturumda bir kez işlendiyse tekrar
+# yüklense bile ATLANIYOR ve eski (hatalı) sonuç -- örn. Kimyasal Adı'nda
+# Bölüm 13 cümlesi -- düzeltme yayına alındıktan sonra da görünmeye devam
+# ediyordu. Kimyasal Adı kutusunun widget anahtarı da bu sürümü içerir,
+# yoksa Streamlit eski kutu değerini geri yüklüyordu.
+try:
+    with open(_extractor_modulu.__file__, "rb") as _f:
+        EXTRACTOR_SURUM = hashlib.md5(_f.read()).hexdigest()[:8]
+except Exception:
+    EXTRACTOR_SURUM = "0"
 from ai_destek import ENGINE_LABELS, FAILOVER_ORDER, build_failover_chain
 from matcher import (build_inventory_row, build_inventory_row_v2, build_inventory_row_v3,
                        NOT_IN_SCOPE_TEXT, MANUAL_REVIEW_TEXT, V3_SUTUNLAR, V3_MANUEL_SUTUNLAR,
@@ -315,6 +330,7 @@ firma_bilgi_alani = st.container()
 QR_KOD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "qr_kod.png")
 
 with st.sidebar:
+    st.caption(f"Okuma motoru sürümü: `{EXTRACTOR_SURUM}`")
     st.header("0) Şablon Versiyonu")
     versiyon = st.radio(
         "Envanter dosyanızın formatı hangisi?",
@@ -758,6 +774,11 @@ mevcut_isimler = existing_names(envanter_path) if (envanter_path and not v2 and 
 tablo_a_hazir = v2 or v3 or os.path.exists(TABLO_A_PATH)
 
 if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
+    # Eski çıkarım koduyla işlenmiş PDF sonuçlarını at (bkz. EXTRACTOR_SURUM).
+    # Atık kodu satırları PDF'ten gelmediği için ("pdf_path" yok) korunur.
+    for _ad in [k for k, u in st.session_state.urunler.items()
+                if u.get("pdf_path") and u.get("surum") != EXTRACTOR_SURUM]:
+        del st.session_state.urunler[_ad]
     if pdf_files:
         yeni_pdfler = [p for p in pdf_files if p.name not in st.session_state.urunler]
 
@@ -805,6 +826,7 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
                     "pdf_path": pdf_path,
                     "info": info,
                     "kimyasal_adi": onerilen_ad,
+                    "surum": EXTRACTOR_SURUM,
                     "ambalaj": "Ambalaj" if v2 else "AMBALAJLI",
                     "logo_path": None,
                     "dahil_et": True,
@@ -892,7 +914,7 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
             with col1:
                 urun["kimyasal_adi"] = st.text_input(
                     "Kimyasal Adı (Envantere yazılacak isim)",
-                    value=urun["kimyasal_adi"], key=f"ad_{fname}",
+                    value=urun["kimyasal_adi"], key=f"ad_{fname}_{urun.get('surum', '')}",
                 )
                 if v2:
                     if urun["kimyasal_adi"].strip():
