@@ -276,7 +276,9 @@ def _issue_date_referansli(text: str):
     Referans yoksa yalnızca bileşenlerden biri 12'yi aşıyorsa (tek
     anlamlı) tarih verilir; belirsizse None döner -- yanlış tarih
     yazmaktansa boş bırakmak daha güvenli."""
-    m = re.search(r"Issue\s+date\s*:?\s*(\d{1,2})/(\d{1,2})/(\d{4})", text, re.IGNORECASE)
+    # "Issue date: 7/17/2024" (Flora) / "Date of issue : 01-21-2015" (Lanxess, ABD)
+    m = re.search(r"(?:Issue\s+date|Date\s+of\s+issue)[\s|]*:?[\s|]*(\d{1,2})[/-](\d{1,2})[/-](\d{4})",
+                  text, re.IGNORECASE)
     if not m:
         return None
     a, b, yil = int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -389,6 +391,7 @@ def extract_suggested_name(text: str):
         r"Ürün ad[ıi]\s*:?\s*(.+)",
         r"Product\s*Name\s*:?\s*(.+)",  # İngilizce MSDS
         r"Trade\s*Name\s*:?\s*(.+)",    # "Trade Name: KROMOFIX..." İngilizce şablon
+        r"Product\s+identifier[\s|]*:[\s|]*([^\n|]{2,90})",  # Lanxess: "Product identifier : VULKANOX BHT EU"
         r"(?m)^\s*[UÜ]nvan[ıi]\s+(.+?)\s*$",  # "Unvanı   LAUFIX E" sütun formatı (ERCA GROUP)
         r"\|\s*[UÜ]nvan[ıi]\s*\|\s*([^\n|]{2,90})\s*\|",  # "| Unvanı | CINDYE DNK |" pipe tablo formatı
         # BASF formatı: header'da "Ürün: Hydrosulfite F"
@@ -416,6 +419,11 @@ def extract_suggested_name(text: str):
             name = re.sub(r"™|®", "", name).strip()
             name = _pipe_ilk_hucre(name)
             name = _urun_adi_kirp(name)
+            # Thor şablonu madde imi olarak "ꞏ" (U+A78F) kullanıyor; ad
+            # satırın devamındaki bir sonraki maddeye yapışık geliyordu
+            # ("Microcare IT ꞏ").
+            if name:
+                name = re.split(r"\s*[ꞏ•]\s*", name)[0].strip(" -·")
             if name:
                 return name
     return None
@@ -425,14 +433,14 @@ def find_section_text(text: str, section_no: int, next_section_no: int = None):
     """find_section14_text'in genel hâli -- herhangi bir bölüm numarasının
     metnini izole eder. Hem 'N.' hem 'BÖLÜM N:' hem 'KISIM N :' hem de
     noktasız 'N Başlık' stillerini tanır (üreticiye göre değişiyor)."""
-    pattern = (rf"(?im)^\s*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*{section_no}"
+    pattern = (rf"(?im)^\s*(?:[#*ꞏ·]+\s*)*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*{section_no}"
                r"\s*(?:[-.:]\s*|\s+(?=[A-ZÇĞİÖŞÜa-zçğışöü]))")
     m_start = re.search(pattern, text)
     if not m_start:
         return None
     start = m_start.start()
     end_no = next_section_no if next_section_no else section_no + 1
-    end_pattern = (rf"(?im)^\s*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*{end_no}"
+    end_pattern = (rf"(?im)^\s*(?:[#*ꞏ·]+\s*)*(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*{end_no}"
                    r"\s*(?:[-.:]\s*|\s+(?=[A-ZÇĞİÖŞÜa-zçğışöü]))")
     m_end = re.search(end_pattern, text[start:])
     end = start + m_end.start() if m_end else min(len(text), start + 4000)
@@ -573,7 +581,7 @@ def _tedarikci_temizle(val: str):
     val = re.sub(r"^(?:Manufacturer|Supplier|Producer|Distributor|Company)\s+(?=[A-ZÇĞİÖŞÜ])",
                  "", val)
     for m_sonek in re.finditer(
-            r"(?:LTD\.?\s*[ŞS]T[İI]\.?|A\.\s?[ŞS]\.?|GmbH|Inc\.|Corp\.|S\.A\.|B\.V\.)",
+            r"(?:LTD\.?\s*[ŞS]T[İI]\.?|\bLTD\.|\bLimited\b|A\.\s?[ŞS]\.?|GmbH|Inc\.|Corp\.|S\.A\.|B\.V\.)",
             val):
         kalan = val[m_sonek.end():]
         if len(kalan) > 15 and re.search(
@@ -627,6 +635,17 @@ def _extract_tedarikci(text: str):
         _aday = _tedarikci_aday(m.group(1).strip())
         if _aday:
             return _aday
+    # İngilizce şablonlar: "Address and telephone number of the supplier:\n
+    # Thor Specialties (UK) LTD. Wincham Avenue ..." (Thor) ve
+    # "Supplier/Manufacturer : LANXESS Corporation" (Lanxess). Genel
+    # "supplier" deseni bunlarda etiket artığını firma adı sanıyordu.
+    for _p in (r"Address\s+and\s+telephone\s+number\s+of\s+the\s+supplier\s*:?[\s\-ꞏ·]*\n?\s*([^\n]{3,200})",
+               r"Supplier\s*/\s*Manufacturer[\s|]*:[\s|]*([^\n|]{3,120})"):
+        m = re.search(_p, bolum1, re.IGNORECASE)
+        if m and m.group(1).strip():
+            _aday = _tedarikci_aday(m.group(1).strip())
+            if _aday:
+                return _aday
     # "Şirket Unvanı   ERCA GROUP..." sütun formatı — etiket + büyük boşluk + değer
     m = re.search(r"[Şşġ]irket\s+[UÜ]nvan[ıi]\s{2,}([^\n]{3,90})", bolum1, re.IGNORECASE)
     if m and m.group(1).strip():
@@ -1002,6 +1021,8 @@ _EN_TR_SOZLUK = {
     "fragrance": "esans",
     "fragrances": "esans",
     "personal care": "kişisel bakım ürünü",
+    "additive for the cosmetic industry": "kozmetik katkı maddesi",
+    "cosmetic additive": "kozmetik katkı maddesi",
 }
 
 # Metnin İngilizce olduğunu ele veren yaygın işlev kelimeleri.
@@ -1155,6 +1176,7 @@ def _extract_fonksiyon(text: str, kisalt: bool = True):
         # tablo hücresinde de gelebilir). Değer sözlükle Türkçeleştirilir.
         r"Use\s+of\s+the\s+substance\s*/\s*mixture[\s|]*:?[\s|]*([^\n|]{3,120})",
         r"Recommended\s+use[\s|]*:[\s|]*([^\n|]{3,120})",  # Ashland: "Recommended use : Personal care"
+        r"Application\s+of\s+the\s+substance\s*/\s*the\s+mixture\s*:\s*([^\nꞏ]{3,120})",  # Thor
         # "...belirlenmiş kullanımları ve tavsiye edilmeyen kullanımları
         # Madde/Karışımın kullanımı : Tekstil ..." -- başlık ve değer AYNI
         # satırda (CHT şablonu). Bu deseni, aşağıdaki genel/greedy son
@@ -1210,15 +1232,16 @@ def _extract_fonksiyon(text: str, kisalt: bool = True):
             # yakalanmışsa atla.
             if "Tanımlanmış" in val and len(val) < 20:
                 continue
-            if re.search(_ingilizce_anahtar, val, re.IGNORECASE):
-                continue  # İngilizce metin -- sıradaki desene geç
             # Sözlükte TAM karşılığı olan İngilizce terimler ağ isteği
             # olmadan Türkçeleştirilir ("Odour agents" -> "koku verici
-            # (esans)"); karşılığı yoksa değer olduğu gibi döner ve AI
-            # yapılandırılmışsa extract_full_info onu çevirir.
+            # (esans)"). Bu kontrol İngilizce elemesinden ÖNCE yapılır --
+            # "Additive for the cosmetic industry" gibi "for" içeren
+            # bilinen ifadeler aksi halde atılıyordu.
             _tam = re.sub(r"\s+", " ", val).strip().strip(".").lower()
             if _tam in _EN_TR_SOZLUK:
                 return _EN_TR_SOZLUK[_tam]
+            if re.search(_ingilizce_anahtar, val, re.IGNORECASE):
+                continue  # İngilizce metin -- sıradaki desene geç
             return val
     return None
 
@@ -1761,6 +1784,24 @@ def _tasima_belgesi_tanimi(sec14: str, un_no):
     return None, None
 
 
+def _un_satiri_sinif_pg(sec14: str, un_no):
+    """UN numarasıyla AYNI SATIRDA sınıf ve PG yan yana duran tablo
+    satırlarından (sınıf, PG) okur. Lanxess (ABD) şablonu:
+        "IMDG Class | UN3077 | ENVIRONMENTALLY | 9 | III | Emergency"
+    ADR satırı varsa ona öncelik verilir. Sınıf tek başına duran 1-9
+    sayısı, PG ise HEMEN ardından gelen büyük harfli I/II/III olmalıdır."""
+    if not un_no:
+        return None, None
+    satirlar = re.findall(rf"(?m)^[^\n]*\bUN\s*-?\s*{re.escape(str(un_no))}\b[^\n]*$", sec14)
+    satirlar.sort(key=lambda l: 0 if re.search(r"\bADR\b", l) else 1)
+    for satir in satirlar:
+        kalan = satir[re.search(rf"\bUN\s*-?\s*{re.escape(str(un_no))}\b", satir).end():]
+        m = re.search(r"(?:^|[\s|,])(\d(?:\.\d)?)[\s|,]+(I{1,3})(?=[\s|,]|$)", kalan)
+        if m and _gecerli_sinif_degeri(m.group(1)):
+            return m.group(1), m.group(2)
+    return None, None
+
+
 def _sinif_bul(sec14: str, un_no=None):
     # 1) Eski desenler (davranış korunur)
     m = _SINIF_ADR.search(sec14) or _SINIF_GENEL.search(sec14)
@@ -1777,8 +1818,9 @@ def _sinif_bul(sec14: str, un_no=None):
                   _alt_bolum_penceresi(sec14, 3))
     if m and _gecerli_sinif_degeri(m.group(1)):
         return m.group(1)
-    # 4) Taşıma belgesi tanımı
-    return _tasima_belgesi_tanimi(sec14, un_no)[0]
+    # 4) Taşıma belgesi tanımı, 5) UN no ile aynı satırdaki tablo
+    return (_tasima_belgesi_tanimi(sec14, un_no)[0]
+            or _un_satiri_sinif_pg(sec14, un_no)[0])
 
 
 def _pg_bul(sec14: str, un_no=None):
@@ -1789,10 +1831,12 @@ def _pg_bul(sec14: str, un_no=None):
     if m:
         return m.group(1)
     # Ashland: "14.4 Packing group\nADN: II ADR: II ..."
-    m = re.search(r"\bADR\s*:\s*(I{1,3})\b", _alt_bolum_penceresi(sec14, 4))
+    # Thor:    "14.4 Packing group\n- ADR, IMDG, IATA III"
+    m = re.search(r"\bADR\b[\s,:/A-Z]{0,30}?(?<![A-Z])(I{1,3})\b", _alt_bolum_penceresi(sec14, 4))
     if m:
         return m.group(1)
-    return _tasima_belgesi_tanimi(sec14, un_no)[1]
+    return (_tasima_belgesi_tanimi(sec14, un_no)[1]
+            or _un_satiri_sinif_pg(sec14, un_no)[1])
 
 
 def _etiketli_tasima_bilgisi(sec14: str):
