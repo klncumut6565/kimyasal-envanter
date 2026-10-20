@@ -328,6 +328,7 @@ def _extract_revize_tarihi(text: str):
         r"[Tt]arih\s*/\s*gözden\s+geçirilme\s+tarihi\s*:\s*" + tarih_degeri,
         # Setaş/Setas formatı: "Güncelleme tarihi: 23.03.2023"
         r"G[üu]ncelleme\s+[Tt]arihi\s*:?\s*" + tarih_degeri,
+        r"G[üu]ncellenme\s*:?\s*" + tarih_degeri,  # Mekitem: "Güncellenme :01.07.2024"
         # BİRPA/Birlik Kimya formatı: "Düzenleme Tarihi 18.07.2016" (kolon
         # yok, "Yeni" öneki de yok -- ayrı bir desen gerekiyor çünkü
         # "Yeni\s+düzen\w*\s+tarihi" bunu yakalamıyor).
@@ -367,6 +368,7 @@ def _urun_adi_kirp(name: str) -> str:
         r"Tan[ıi]m[ıi]n\s+başka", r"\bEşanlamlı",
         r"\bChemical\s+Structure\b", r"\bCAS\s*#",
         r"\bTrademark\b",  # Ashland: "Advantage™ LC-E polymer ™ Trademark, Ashland or its..."
+        r"\bKULLANIM\s*:", r"\bSATICI\s*:",  # Mekitem: "TİCARİ İSİM :<ad> KULLANIM : ... SATICI :"
     ]
     en_erken = len(name)
     for isaretci in isaretciler:
@@ -386,7 +388,7 @@ def _urun_adi_kirp(name: str) -> str:
 # MSDS'lerde Bölüm 13'te "Ürün:" / "Ambalaj:" alt başlığı çok yaygın.
 _URUN_ADI_CUMLE_ISARETI = re.compile(
     r"(?i)\b(?:b[öo]l[üu]m\w*|g[öo]re|y[öo]netmeli\w*|talimat\w*|bertaraf\w*|"
-    r"at[ıi]k\w*|kanalizasyon\w*|edilmeli\w*|uygun\w*|verilen|"
+    r"kanalizasyon\w*|edilmeli\w*|uygun\w*|verilen|"  # "atık" çıkarıldı: "Sıvı Atık Jelleştirici" gerçek ürün adı
     r"section\w*|accordance|dispos\w*|regulation\w*|must|should)\b")
 
 
@@ -415,6 +417,9 @@ def extract_suggested_name(text: str):
         # Gülçiçek: "1.1. Madde/Karisim kimligi 4127342 KG/ STRAWBERRY SCRUB MOD ©MG ürünü"
         r"Madde\s*/\s*Kar[ıi][şs][ıi]m\s+kimli[ğg]i[ \t]*:?[ \t]*([^\n©]{2,90}?)\s*(?:©|\s{2,}|\n|$)",
         r"Ticari\s+is(?:im\b|mi\w*)\s*:?\s*(.+)",
+        # "TİCARİ İSİM :<ad> KULLANIM : ..." (Mekitem) -- Python'da "İ"
+        # IGNORECASE ile "i" sayılmadığı için üstteki desen eşleşmiyor.
+        r"T[İI]CAR[İI]\s+[İI]S[İI]M\s*:\s*([^\n]{2,90}?)\s+(?:KULLANIM|SATICI|[ÜU]RET[İI]C[İI])\b",
         r"Ticari ad[ıi]\s*:?\s*(.+)",
         r"Ürün ad[ıi]\s*:?\s*(.+)",
         r"Product\s*Name\s*:?\s*(.+)",  # İngilizce MSDS
@@ -611,7 +616,7 @@ def _tedarikci_temizle(val: str):
                  "", val)
     val = re.sub(r"^[İI]leti[şs]im\s+Bilgileri\s*:?\s*", "", val)  # Diversey
     for m_sonek in re.finditer(
-            r"(?:LTD\.?\s*[ŞS]T[İI]\.?|\bLTD\.|\bLimited\b|A\.\s?[ŞS]\.?|GmbH|Inc\.|Corp\.|S\.A\.|B\.V\.)",
+            r"(?:(?i:ltd)\.?\s*[ŞS](?i:t)[İIi]\.?|\bLTD\.|\bLimited\b|A\.\s?[ŞS]\.?|GmbH|Inc\.|Corp\.|S\.A\.|B\.V\.)",
             val):
         kalan = val[m_sonek.end():]
         if len(kalan) > 15 and re.search(
@@ -669,7 +674,8 @@ def _extract_tedarikci(text: str):
     # Thor Specialties (UK) LTD. Wincham Avenue ..." (Thor) ve
     # "Supplier/Manufacturer : LANXESS Corporation" (Lanxess). Genel
     # "supplier" deseni bunlarda etiket artığını firma adı sanıyordu.
-    for _p in (r"Address\s+and\s+telephone\s+number\s+of\s+the\s+supplier\s*:?[\s\-ꞏ·]*\n?\s*([^\n]{3,200})",
+    for _p in (r"\bSATICI\s*:\s*([^\n]{3,200})",  # Mekitem
+               r"Address\s+and\s+telephone\s+number\s+of\s+the\s+supplier\s*:?[\s\-ꞏ·]*\n?\s*([^\n]{3,200})",
                r"Supplier\s*/\s*Manufacturer[\s|]*:[\s|]*([^\n|]{3,120})"):
         m = re.search(_p, bolum1, re.IGNORECASE)
         if m and m.group(1).strip():
@@ -1052,6 +1058,8 @@ _EN_TR_SOZLUK = {
     "fragrances": "esans",
     "personal care": "kişisel bakım ürünü",
     "additive for the cosmetic industry": "kozmetik katkı maddesi",
+    "food processing aid": "gıda işleme yardımcı maddesi",
+    "preservation and sanitation agent": "koruma ve sanitasyon maddesi",
     "cosmetic additive": "kozmetik katkı maddesi",
 }
 
@@ -1575,7 +1583,7 @@ def extract_uyari_kelimesi(text: str):
 
 def _extract_uyari_kelimesi(text: str):
     bolum2 = find_section_text(text, 2, 3) or text
-    m = re.search(r"Uyar[ıi]\s+[Kk]elimesi\s*:?\s*\n?\s*([^\n]{2,30})", bolum2)
+    m = re.search(r"Uyar[ıi]\s*[Kk]elimesi\s*:?\s*\n?\s*([^\n]{2,30})", bolum2)
     if m and m.group(1).strip():
         _aday = _tedarikci_aday(m.group(1).strip())
         if _aday:
@@ -2072,7 +2080,7 @@ def kesin_kapsam_disi(sec14_text: str) -> bool:
     un_belirteci_yok = not re.search(r"(?i)\bUN\s*-?\s*\d{4}\b|:\s*\d{4}\b", t)
     # Diversey: "14.1 BM (UN) numarası veya kimlik numarası: Tehlikesiz malzemeler"
     if un_belirteci_yok and re.search(
-            r"(?i)14\s*\.?\s*1\b[^:]{0,80}:\s*Tehlikesiz\s+(?:malzeme|madde|[üu]r[üu]n)", t):
+            r"(?i)14\s*\.?\s*1(?!\d)[^:]{0,80}:\s*Tehlikesiz\s*(?:malzeme|madde|[üu]r[üu]n)", t):
         return True
     # Detro: Bölüm 14'ün TAMAMI "Sınıflandırılmaz." -- başka veri yok.
     if un_belirteci_yok and re.search(
@@ -2086,7 +2094,7 @@ def kesin_kapsam_disi(sec14_text: str) -> bool:
     # Bölüm 14'te HİÇBİR "UN ####" belirteci yokken kesin kapsam dışı sayılır.
     duzenlenmemis = re.search(
         r"(?i)[ÜU]N[\s-]*(?:numaras[ıi]|number|no\.?)[^\n]{0,20}?[\s:|]*"
-        r"(?:D[üu]zenlenmemi[şs]|Not\s+regulated|Not\s+dangerous\s+goods)\b", t)
+        r"(?:D[üu]zenlenmemi[şs]\w*|Not\s+regulated|Not\s+dangerous\s+goods)\b", t)
     if duzenlenmemis and not re.search(r"(?i)\bUN\s*-?\s*\d{4}\b", t):
         return True
     return False
