@@ -1844,6 +1844,16 @@ def _tasima_belgesi_tanimi(sec14: str, un_no):
     return None, None
 
 
+_BM_UN_NUMARASI = re.compile(
+    r"(?i)(?:BM\s*)?\(\s*UN\s*\)\s*numaras[ıi]"
+    r"(?:\s+veya\s+kimlik\s+numaras[ıi])?\s*:?\s*(?:UN\s*)?(\d{4})\b")
+
+# "Taşımacılık zararlılık sınıfı (ve ek riskleri): 8" (Diversey) -- parantezli
+# nitelik etiket ile ":" arasına giriyor.
+_SINIF_NITELIKLI_TR = re.compile(
+    r"(?i)s[ıi]n[ıi]f[ıi]?(?:\s*\([^)\n]{0,25}\))+\s*:\s*(\d(?:\.\d)?)\b")
+
+
 def _un_satiri_sinif_pg(sec14: str, un_no):
     """UN numarasıyla AYNI SATIRDA sınıf ve PG yan yana duran tablo
     satırlarından (sınıf, PG) okur. Lanxess (ABD) şablonu:
@@ -1868,7 +1878,7 @@ def _sinif_bul(sec14: str, un_no=None):
     if m:
         return m.group(1)
     # 2) "(ADR)" nitelikli etiket öncelikli, sonra genel nitelikli etiket
-    for desen in (_SINIF_NITELIKLI_ADR, _SINIF_NITELIKLI):
+    for desen in (_SINIF_NITELIKLI_ADR, _SINIF_NITELIKLI, _SINIF_NITELIKLI_TR):
         m = desen.search(sec14)
         if m and _gecerli_sinif_degeri(m.group(1)) and m.group(1) != str(un_no):
             return m.group(1)
@@ -2665,6 +2675,22 @@ def extract_adr_info(pdf_path: str, ai_chain: list = None, ai_models: dict = Non
         return result
 
     result["ham_metin_bulundu"] = True
+
+    # Yöntem 0: Diversey şablonu -- "14.1 BM (UN) numarası veya kimlik
+    # numarası: 3264". "UN" parantez içinde olduğu için hiçbir UN deseni
+    # tutmuyordu. Markdown dönüşümünde aynı satırda "(ADR/RID) ...: 3264"
+    # kalıbına şans eseri takılıyordu; gerçek PDF'te (pdfplumber) satırlar
+    # ayrık geldiği için ürün "MANUEL KONTROL GEREKLİ" oluyordu. Ayrıca
+    # Bölüm 14 sonundaki "Diğer ilgili bilgiler: ADR / Sınıflandırma kodu"
+    # bloğu Yöntem 1'i yanıltıyor -- bu yüzden Yöntem 1'den ÖNCE çalışır.
+    m0 = _BM_UN_NUMARASI.search(sec14)
+    if m0 and 4 <= int(m0.group(1)) <= 3600:
+        un0 = m0.group(1)
+        result["adr_kapsaminda"] = True
+        result["un_no"] = un0
+        result["sinif"] = _sinif_bul(sec14, un0)
+        result["paketleme_grubu"] = _pg_bul(sec14, un0)
+        return result
 
     # Yöntem 1: Tek başına "ADR" satırı + altındaki "UN ####" deseni
     # (örn. Ashland/DyStar şablonu).
