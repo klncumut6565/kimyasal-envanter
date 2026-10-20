@@ -310,7 +310,7 @@ def _extract_revize_tarihi(text: str):
     # Tarih değeri sadece sayısal ("12.02.2019") olabildiği gibi, Türkçe
     # ay adıyla yazılı ("12 Şubat 2019", örn. HABAŞ şablonu) da olabilir;
     # bu yüzden değer deseni her ikisini de kapsıyor.
-    tarih_degeri = r"(\d{1,2}[./]\d{1,2}[./]\d{2,4}|\d{1,2}\s+\w+\s+\d{4})"
+    tarih_degeri = r"(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[./]\d{1,2}[./]\d{2,4}|\d{1,2}\s+\w+\s+\d{4})"
     patterns = [
         r"Reviz\w*\b.{0,15}[Tt]arih\w*\s*:?\s*" + tarih_degeri,
         r"\bRev\.\s*[Tt]arihi\s*[\s|]*:?[\s|]*" + tarih_degeri,  # "Rev. Tarihi : 23.11.2012" kısaltması
@@ -319,6 +319,7 @@ def _extract_revize_tarihi(text: str):
         r"Yay[ıi]nlanma\s*[Tt]arihi\s*:?\s*" + tarih_degeri,  # "Yayınlanma Tarihi:08.03.2019" (FOURKIM şablonu)
         r"G[öo]zden\s+geçirme\s+[Tt]arihi\s*:?\s*" + tarih_degeri,  # "Gözden geçirme tarihi: 27.11.2020" (Mavagen)
         r"\bRevision\s*:?\s*" + tarih_degeri,  # İngilizce MSDS
+        r"\bRevizyon\s*:\s*" + tarih_degeri,  # Diversey: "Revizyon: 2024-08-05"
         r"\brevize\s*:\s*" + tarih_degeri,  # Gülçiçek altlığı: "üzerinde revize: 15 temmuz 2024"
         r"\bRevision\s+Date\s*:?\s*" + tarih_degeri,  # "Revision Date: 12.12.2020" sütun formatı
         r"Reviewed\s+on\s*:?\s*" + tarih_degeri,  # "Reviewed on: 05.04.2017" İngilizce şablon
@@ -343,7 +344,7 @@ def _extract_revize_tarihi(text: str):
     # Son çare: "Hazırlanma Tarihi : 19.04.2018" -- gerçek bir revizyon/
     # yayın tarihi hiçbir yerde bulunamadıysa, belgenin hazırlanma
     # tarihi de MSDS'in "yaşını" göstermek için makul bir yedektir.
-    m = re.search(r"Haz[ıi]rlan?ma\s+[Tt]arihi\s*:?\s*" + tarih_degeri, text, re.IGNORECASE)
+    m = re.search(r"Haz[ıi]rlan?ma\s+[Tt]arihi[\s|]*:?[\s|]*" + tarih_degeri, text, re.IGNORECASE)
     if m:
         return m.group(1).strip()
     m = re.search(r"\bHaz\.\s*[Tt]arihi\s*[\s|]*:?[\s|]*" + tarih_degeri, text, re.IGNORECASE)
@@ -608,6 +609,7 @@ def _tedarikci_temizle(val: str):
     # sonra adres/iletişim bilgisiyle devam ediyorsa sonekte kesilir.
     val = re.sub(r"^(?:Manufacturer|Supplier|Producer|Distributor|Company)\s+(?=[A-ZÇĞİÖŞÜ])",
                  "", val)
+    val = re.sub(r"^[İI]leti[şs]im\s+Bilgileri\s*:?\s*", "", val)  # Diversey
     for m_sonek in re.finditer(
             r"(?:LTD\.?\s*[ŞS]T[İI]\.?|\bLTD\.|\bLimited\b|A\.\s?[ŞS]\.?|GmbH|Inc\.|Corp\.|S\.A\.|B\.V\.)",
             val):
@@ -1176,6 +1178,11 @@ def _extract_fonksiyon(text: str, kisalt: bool = True):
     metni dönsün, aksi halde None (elle doldurulacak) dönülür."""
     bolum1 = find_section_text(text, 1, 2) or text[:3000]
     patterns = [
+        # Diversey: "Ürün kullanımı: Kireç Çözücü. Sadece profesyonel kullanım
+        # içindir. Tavsiye edilmeyen kullanımları: ..." -- değer İLK cümledir.
+        # Tüm satır alındığında 70 karakter eşiğini aşıp "YARDIMCI KİMYASAL"
+        # oluyordu. Pipe tablo hücresi biçimi de ("| Ürün kullanımı: | X |").
+        r"[ÜU]r[üu]n\s+kullan[ıi]m[ıi][\s|]*:[\s|]*([^.\n|]{3,120})",
         # EN YÜKSEK ÖNCELİK — "Maddenin/karışımın kullanımı : Reaktif boyar
         # madde". Bu etiket ürünün GERÇEK fonksiyonunu verir ve aynı 1.2
         # bloğunda yer alan "Ana kullanım kategorisi" (Endüstriyel/
@@ -1549,7 +1556,24 @@ def extract_h_kodlari(text: str):
 
 
 def extract_uyari_kelimesi(text: str):
-    """Bölüm 2.2'den Uyarı Kelimesi'ni (Tehlike/Dikkat) çıkarır."""
+    """Bölüm 2.2'den Uyarı Kelimesi'ni (Tehlike/Dikkat) çıkarır ve
+    normalize eder. Diversey "Uyarı kelimesi: Tehlike." (sondaki nokta
+    hücreye yazılıyordu); Detro "Uyarı Kelimesi: Bulunmamaktadır
+    Zararlılık İfadeleri: ..." (uyarı kelimesi YOK ama satırın devamı
+    değer sanılıyordu)."""
+    deger = _extract_uyari_kelimesi(text)
+    if not deger:
+        return deger
+    d = deger.strip(" .:;|").strip()
+    m = re.match(r"(?i)(tehlike|dikkat)\b", d)
+    if m:
+        return m.group(1).capitalize()
+    if re.match(r"(?i)(bulunmamaktad[ıi]r|yok|yoktur|none|-|uygulanamaz|not\s+applicable)", d):
+        return None
+    return d
+
+
+def _extract_uyari_kelimesi(text: str):
     bolum2 = find_section_text(text, 2, 3) or text
     m = re.search(r"Uyar[ıi]\s+[Kk]elimesi\s*:?\s*\n?\s*([^\n]{2,30})", bolum2)
     if m and m.group(1).strip():
@@ -2044,6 +2068,15 @@ def kesin_kapsam_disi(sec14_text: str) -> bool:
         r"[İIıi]lgili\s+de[ğg]il|Yok|Not\s+applicable|N\s*/\s*A)\b",
     ]
     if any(re.search(p, t) for p in desenler):
+        return True
+    un_belirteci_yok = not re.search(r"(?i)\bUN\s*-?\s*\d{4}\b|:\s*\d{4}\b", t)
+    # Diversey: "14.1 BM (UN) numarası veya kimlik numarası: Tehlikesiz malzemeler"
+    if un_belirteci_yok and re.search(
+            r"(?i)14\s*\.?\s*1\b[^:]{0,80}:\s*Tehlikesiz\s+(?:malzeme|madde|[üu]r[üu]n)", t):
+        return True
+    # Detro: Bölüm 14'ün TAMAMI "Sınıflandırılmaz." -- başka veri yok.
+    if un_belirteci_yok and re.search(
+            r"(?i)TA[ŞS]IMA\w*\s+B[İI]LG[İI]\w*\s*[.:]?\s*S[ıi]n[ıi]fland[ıi]r[ıi]lmaz\b", t):
         return True
     # "14.1 UN numarası: Düzenlenmemiş" / "UN number: Not regulated" --
     # Gülçiçek şablonu (font ş/ı harflerini düşürdüğü için metinde
