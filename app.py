@@ -873,15 +873,27 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
             return "ürün adı şüpheli (uzun / kod / dosya eki)"
         return None
 
+    def _satir_durumu(urun):
+        """Kartın içinde gösterilen önizlemeyle AYNI hesap -- başlık 🟢 dese
+        bile build_inventory_row 'manual_review' dönebiliyor (UN var ama
+        Tablo A eşleşmesi/alanlar eksik). Sıralama bu GERÇEK sonuca bakar."""
+        info = urun.get("info") or {}
+        try:
+            if v3:
+                return build_inventory_row_v3(info, urun["kimyasal_adi"]).get("durum")
+            if v2:
+                return build_inventory_row_v2(info, urun["kimyasal_adi"], urun["ambalaj"]).get("durum")
+            return build_inventory_row(info, TABLO_A_PATH, urun["kimyasal_adi"], urun["ambalaj"]).get("durum")
+        except Exception:
+            return "manual_review"
+
     def _manuel_mi(urun):
         info = urun.get("info") or {}
         if info.get("okuma_hatasi"):
             return True
         if v3:
             return not any(info.get(k) for k in _V3_ANA_ALANLAR)
-        if info.get("adr_kapsaminda") is False:
-            return False
-        return not (info.get("adr_kapsaminda") and info.get("un_no"))
+        return _satir_durumu(urun) == "manual_review"
 
     def _oncelik(urun):
         info = urun.get("info") or {}
@@ -896,8 +908,10 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
             return 3
         return 4
 
+    # Grup içinde dosya adına göre alfabetik (yükleme sırası tarayıcıya göre
+    # değişebildiği için "rastgele" görünüyordu).
     tum_urun_listesi = sorted(st.session_state.urunler.items(),
-                              key=lambda kv: _oncelik(kv[1]))  # stabil: sıra korunur
+                              key=lambda kv: (_oncelik(kv[1]), kv[0].lower()))
     toplam_urun = len(tum_urun_listesi)
     _sorunlu = sum(1 for _, u in tum_urun_listesi if _oncelik(u) < 4)
     if _sorunlu:
@@ -954,6 +968,8 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
                 else "🟠 MANUEL KONTROL GEREKLİ (Bölüm 14 otomatik okunamadı)"
             )
 
+        if not v3 and not info.get("okuma_hatasi") and _manuel_mi(urun):
+            durum = "🟠 MANUEL KONTROL GEREKLİ"
         _ad_uyari = _ad_sorunu(urun)
         if _ad_uyari:
             durum += f" · ✏️ {_ad_uyari.upper()}"
