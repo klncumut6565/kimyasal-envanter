@@ -1923,8 +1923,23 @@ def _pg_bul(sec14: str, un_no=None):
     m = re.search(r"\bADR\b[\s,:/A-Z]{0,30}?(?<![A-Z])(I{1,3})\b", _alt_bolum_penceresi(sec14, 4))
     if m:
         return m.group(1)
+    # DyStar (Lava/Evo/Cerat) şablonu: "ADR  UN 3253 Disodium ...\n
+    #   Sınıf: 8 PG:III" -- PG "PG:" kısaltmasıyla, boşluksuz yazılıyor;
+    # yukarıdaki desenler yalnızca "Packing group"/"Ambalaj grubu" tanıyordu.
+    # ADR satırından sonraki ilk "PG:" öncelikli (IMDG/IATA'dan önce).
+    m = _PG_KISALTMA.search(sec14, _adr_konumu(sec14)) or _PG_KISALTMA.search(sec14)
+    if m:
+        return m.group(1)
     return (_tasima_belgesi_tanimi(sec14, un_no)[1]
             or _un_satiri_sinif_pg(sec14, un_no)[1])
+
+
+_PG_KISALTMA = re.compile(r"\bP\.?G\.?\s*[:.]?\s*(I{1,3})(?![A-Za-z])")
+
+
+def _adr_konumu(sec14: str) -> int:
+    m = re.search(r"(?m)^\s*ADR\b", sec14) or re.search(r"\bADR\b", sec14)
+    return m.start() if m else 0
 
 
 def _etiketli_tasima_bilgisi(sec14: str):
