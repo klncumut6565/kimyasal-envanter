@@ -389,7 +389,12 @@ def _urun_adi_kirp(name: str) -> str:
 _URUN_ADI_CUMLE_ISARETI = re.compile(
     r"(?i)\b(?:b[öo]l[üu]m\w*|g[öo]re|y[öo]netmeli\w*|talimat\w*|bertaraf\w*|"
     r"kanalizasyon\w*|edilmeli\w*|uygun\w*|verilen|"  # "atık" çıkarıldı: "Sıvı Atık Jelleştirici" gerçek ürün adı
-    r"section\w*|accordance|dispos\w*|regulation\w*|must|should)\b")
+    r"section\w*|accordance|dispos\w*|regulation\w*|must|should|"
+    # DyStar Bölüm 13/12: "Ürün: Tekrar kullanım veya geri dönüşüm mümkün
+    # olmadığı taktirde..." ve "Ürün: tespit edilmedi" -- veri yok ifadeleri
+    r"tespit\s+edilmedi|uygulanamaz|belirlenmedi|mevcut\s+de[ğg]il|bilinmiyor|"
+    r"geri\s+d[öo]n[üu][şs][üu]m\w*|tekrar\s+kullan[ıi]m\w*|taktirde|takdirde|"
+    r"m[üu]mk[üu]n|not\s+determined|not\s+available|no\s+data)\b")
 
 
 def _urun_adi_gecersiz(name: str) -> bool:
@@ -416,6 +421,11 @@ def extract_suggested_name(text: str):
         r"Ürün\s+is(?:im\b|mi\w*)\s*:?\s*(.+)",
         # Gülçiçek: "1.1. Madde/Karisim kimligi 4127342 KG/ STRAWBERRY SCRUB MOD ©MG ürünü"
         r"Madde\s*/\s*Kar[ıi][şs][ıi]m\s+kimli[ğg]i[ \t]*:?[ \t]*([^\n©]{2,90}?)\s*(?:©|\s{2,}|\n|$)",
+        # DyStar: "1.1 Madde / Karışım kimliği" başlığı tek başına satırda,
+        # ürün adı (boş satır(lar)dan sonra) ALT satırda: "Evo® Soft HCV".
+        # Bu yakalanmazsa Bölüm 13'teki "Ürün: Tekrar kullanım veya geri
+        # dönüşüm..." / "Ürün: tespit edilmedi" satırı ürün adı sanılıyordu.
+        r"Madde\s*/\s*Kar[ıi][şs][ıi]m\s+kimli[ğg]i[ \t]*:?[ \t]*\n\s*([^\n]{2,90}?)[ \t]*(?:\s{2,}|\n|$)",
         r"Ticari\s+is(?:im\b|mi\w*)\s*:?\s*(.+)",
         # "TİCARİ İSİM :<ad> KULLANIM : ..." (Mekitem) -- Python'da "İ"
         # IGNORECASE ile "i" sayılmadığı için üstteki desen eşleşmiyor.
@@ -598,6 +608,14 @@ def _tedarikci_temizle(val: str):
     if not val:
         return val
     val = _tekrari_sil(val)          # collapse ÖNCESİ (sütun ipucu duruyor)
+    # DyStar: iki sütunlu blok -- "DyStar Colours Distribution GmbH      DyStar
+    # Kimya San. Tic. Ltd. Şti," (merkez + yerel distribütör yan yana). İlk
+    # sütun zaten bir firma sonekiyle BİTİYORSA ikinci sütunu at.
+    _sutunlar = [x.strip() for x in re.split(r"\s{2,}", val.strip()) if x.strip()]
+    if len(_sutunlar) >= 2 and re.search(
+            r"(?:GmbH|A\.\s?[ŞS]\.?|(?i:ltd)\.?\s*[ŞS](?i:t)[İIi]\.?|Inc\.|Corp\.|S\.A\.|B\.V\.|AG|SE|S\.p\.A\.|Ltd\.?)\s*[,.]?$",
+            _sutunlar[0]):
+        val = _sutunlar[0]
     onceki = None
     while onceki != val:
         onceki = val
