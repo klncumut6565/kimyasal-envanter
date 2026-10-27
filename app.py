@@ -850,8 +850,59 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
     # expander + widget + tablo çizmek Streamlit'i çok yavaşlatıyor ve
     # bellek/zaman aşımı hatalarına yol açıyordu. Tek seferde sadece
     # seçili sayfadaki ürünler render edilir; diğerleri hiç çizilmez.
-    tum_urun_listesi = list(st.session_state.urunler.items())
+    # ── Öncelik sıralaması ────────────────────────────────────────────
+    # Manuel doldurma/kontrol uyarısı verenler ve ürün adı hatalı/şüpheli
+    # olanlar EN ÜSTTE listelenir (kullanıcı önce bunları düzeltsin).
+    _V3_ANA_ALANLAR = ("tedarikci", "uretici", "urun_kodu", "cas_no", "cas_listesi",
+                       "h_kodlari", "revize_tarihi", "kimyasalin_turu", "fonksiyon")
+
+    def _ad_sorunu(urun):
+        """Ürün adı sorunluysa kısa açıklama döner, değilse None."""
+        ad = (urun.get("kimyasal_adi") or "").strip()
+        info = urun.get("info") or {}
+        if not ad:
+            return "ürün adı boş"
+        if not info.get("onerilen_ad"):
+            return "ad PDF'ten okunamadı (dosya adından türetildi)"
+        try:
+            if _extractor_modulu._urun_adi_gecersiz(ad):
+                return "ürün adı hatalı ifade içeriyor"
+        except Exception:
+            pass
+        if len(ad) > 60 or re.search(r"\b\d{6,}\b|_|\bM?SDS\b", ad, re.IGNORECASE):
+            return "ürün adı şüpheli (uzun / kod / dosya eki)"
+        return None
+
+    def _manuel_mi(urun):
+        info = urun.get("info") or {}
+        if info.get("okuma_hatasi"):
+            return True
+        if v3:
+            return not any(info.get(k) for k in _V3_ANA_ALANLAR)
+        if info.get("adr_kapsaminda") is False:
+            return False
+        return not (info.get("adr_kapsaminda") and info.get("un_no"))
+
+    def _oncelik(urun):
+        info = urun.get("info") or {}
+        if info.get("okuma_hatasi"):
+            return 0
+        manuel, ad_hata = _manuel_mi(urun), _ad_sorunu(urun) is not None
+        if manuel and ad_hata:
+            return 1
+        if manuel:
+            return 2
+        if ad_hata:
+            return 3
+        return 4
+
+    tum_urun_listesi = sorted(st.session_state.urunler.items(),
+                              key=lambda kv: _oncelik(kv[1]))  # stabil: sıra korunur
     toplam_urun = len(tum_urun_listesi)
+    _sorunlu = sum(1 for _, u in tum_urun_listesi if _oncelik(u) < 4)
+    if _sorunlu:
+        st.warning(f"⚠️ {_sorunlu} ürün manuel kontrol/doldurma gerektiriyor veya ürün adı "
+                   "hatalı görünüyor — bunlar listenin EN ÜSTÜNDE gösteriliyor.")
 
     if "review_sayfa" not in st.session_state:
         st.session_state.review_sayfa = 0
@@ -902,6 +953,13 @@ if envanter_path and tablo_a_hazir and (pdf_files or st.session_state.urunler):
                 else "⚪ ADR kapsamında değil" if info.get("adr_kapsaminda") is False
                 else "🟠 MANUEL KONTROL GEREKLİ (Bölüm 14 otomatik okunamadı)"
             )
+
+        _ad_uyari = _ad_sorunu(urun)
+        if _ad_uyari:
+            durum += f" · ✏️ {_ad_uyari.upper()}"
+        if v3 and not info.get("okuma_hatasi") and _manuel_mi(urun):
+            durum = "🟠 MANUEL DOLDURMA GEREKLİ (otomatik alan çıkarılamadı)" + (
+                f" · ✏️ {_ad_uyari.upper()}" if _ad_uyari else "")
 
         with st.expander(f"📄 {fname} — {durum}", expanded=True):
             if info.get("okuma_hatasi"):
