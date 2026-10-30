@@ -425,7 +425,11 @@ def extract_suggested_name(text: str):
         # ürün adı (boş satır(lar)dan sonra) ALT satırda: "Evo® Soft HCV".
         # Bu yakalanmazsa Bölüm 13'teki "Ürün: Tekrar kullanım veya geri
         # dönüşüm..." / "Ürün: tespit edilmedi" satırı ürün adı sanılıyordu.
-        r"Madde\s*/\s*Kar[ıi][şs][ıi]m\s+kimli[ğg]i[ \t]*:?[ \t]*\n\s*([^\n]{2,90}?)[ \t]*(?:\s{2,}|\n|$)",
+        # Alt satır bir ETİKET satırıysa ("Ticari Adı  DERDEVICE", "Ürün formu :
+        # Karışım") bu desen atlanır; etiketli desenler aşağıda doğru değeri alır.
+        r"Madde\s*/\s*Kar[ıi][şs][ıi]m\s+kimli[ğg]i[ \t]*:?[ \t]*\n\s*(?=\S)"  # (?=\S): \s* geri sarıp lookahead'i atlatmasın
+        r"(?!(?:Ticari|Ticaret|[UÜ]r[üu]n|Kimyasal|Tan[ıi]m|Madde|Kar[ıi][şs][ıi]m|Product|Trade|Ad[ıi]|[İI]sim|Kod)\b)"
+        r"([^\n:]{2,90}?)[ \t]*(?:\s{2,}|\n|$)",
         r"Ticari\s+is(?:im\b|mi\w*)\s*:?\s*(.+)",
         # "TİCARİ İSİM :<ad> KULLANIM : ..." (Mekitem) -- Python'da "İ"
         # IGNORECASE ile "i" sayılmadığı için üstteki desen eşleşmiyor.
@@ -694,7 +698,11 @@ def _extract_tedarikci(text: str):
     # "supplier" deseni bunlarda etiket artığını firma adı sanıyordu.
     for _p in (r"\bSATICI\s*:\s*([^\n]{3,200})",  # Mekitem
                r"Address\s+and\s+telephone\s+number\s+of\s+the\s+supplier\s*:?[\s\-ꞏ·]*\n?\s*([^\n]{3,200})",
-               r"Supplier\s*/\s*Manufacturer[\s|]*:[\s|]*([^\n|]{3,120})"):
+               r"Supplier\s*/\s*Manufacturer[\s|]*:[\s|]*([^\n|]{3,120})",
+               # MSD/US: "Manufacturer/Supplier:\n Custom Manufactured Products, LLC"
+               r"Manufacturer\s*/\s*Supplier[\s|]*:[\s|]*\n?\s*([^\n|]{3,120})",
+               # Ecolab AU: "Company  : ECOLAB PTY LTD"
+               r"(?m)^[\s·ꞏ*-]*Company[ \t]*:[ \t]*([^\n|]{3,120})"):
         m = re.search(_p, bolum1, re.IGNORECASE)
         if m and m.group(1).strip():
             _aday = _tedarikci_aday(m.group(1).strip())
@@ -1997,7 +2005,9 @@ def find_section14_text(text: str):
         # bulunamıyordu. Yanlış eşleşmeyi (telefon/tarih içindeki "14")
         # önlemek için 14'ten SONRA taşıma anahtar kelimesi ZORUNLU tutulur.
         m_start = re.search(
-            r"(?i)(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*\b14\b\s*[-.:]?\s*"
+            # "\b14(?!\d|\.\d)": "* 14Transport information" (MSD/US şablonu,
+            # sayı ile başlık bitişik) da yakalansın; "14.1" alt başlığı değil.
+            r"(?i)(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*\b14(?!\d|\.\d)\s*[-.:]?\s*"
             r"(?=[^\n]{0,20}(TRANSPORT|TA[ŞS]IMA|TA[ŞS]IMACILIK|NAKL[İI]YE))",
             text)
     if not m_start:
@@ -2013,7 +2023,7 @@ def find_section14_text(text: str):
     else:
         # Bitiş başlığı da satır ortasında olabilir (bkz. yukarıdaki Fallback 1).
         m_end2 = re.search(
-            r"(?i)(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*\b15\b\s*[-.:]?\s*"
+            r"(?i)(?:B[ÖO]L[ÜU]M|KISIM|SECTION)?\s*\b15(?!\d|\.\d)\s*[-.:]?\s*"
             r"(?=[^\n]{0,25}(MEVZUAT|REGULAT|YASAL|LEGAL))",
             text[start + 1:])
         m_end_pos = start + 1 + m_end2.start() if m_end2 else None
