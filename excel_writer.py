@@ -475,8 +475,7 @@ def _etiket_gorseli_goml(ws, row, col, kodlar, hucre_yuksekligi=110,
     try:
         from etiket_gorselleri import png_akisi
         from openpyxl.drawing.spreadsheet_drawing import (
-            AnchorMarker, OneCellAnchor)
-        from openpyxl.drawing.xdr import XDRPositiveSize2D
+            AnchorMarker, TwoCellAnchor)
     except Exception:
         return  # modül yoksa sessizce geç
 
@@ -536,10 +535,15 @@ def _etiket_gorseli_goml(ws, row, col, kodlar, hucre_yuksekligi=110,
         try:
             img = XLImage(png_akisi(kod))
             img.width, img.height = gen, yuk
-            img.anchor = OneCellAnchor(
+            # TwoCellAnchor + editAs='twoCell' = Excel'deki "Hücrelerle taşı
+            # ve boyutlandır". Görsel kendi hücresine bağlanır; sütun/satır
+            # gizlenince görsel de gizlenir, başka hücrelerin üzerine binmez.
+            img.anchor = TwoCellAnchor(
+                editAs="twoCell",
                 _from=AnchorMarker(col=col - 1, colOff=x * EMU,
-                                    row=row - 1, rowOff=y * EMU),
-                ext=XDRPositiveSize2D(gen * EMU, yuk * EMU))
+                                   row=row - 1, rowOff=y * EMU),
+                to=AnchorMarker(col=col - 1, colOff=(x + gen) * EMU,
+                                row=row - 1, rowOff=(y + yuk) * EMU))
             ws.add_image(img)
         except Exception:
             continue
